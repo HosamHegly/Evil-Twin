@@ -10,10 +10,11 @@ from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth
 # global variables
 networks = pandas.DataFrame(columns=["BSSID", "SSID", "dBm_Signal", "Channel", "Crypto"])
 networks.set_index("BSSID", inplace=True)
-network_mac = dict
+network_mac = dict()
 tic = time.perf_counter()
 ch = 1
 devices = dict()
+interface = ''
 presentation = '''
 
   ______           _   _     _______              _         
@@ -31,6 +32,7 @@ made by: Hosam Hegly, Ayman Younis, Ahmad Abed
 def main():
     global network_mac
     global presentation
+    global interface
     print(presentation)
     interface = get_interface()
     monitor_mode(interface)
@@ -41,8 +43,8 @@ def main():
     channel_changer = Thread(target=change_channel)
     channel_changer.daemon = True
     channel_changer.start()
-    progbar = Thread(target=progressbar(), daemon=True)
-    progbar.start()
+    '''progbar = Thread(target=progressbar(), daemon=True)
+    progbar.start()'''
     sniff(prn=callback, iface=interface, timeout=60)
     twin = get_network().lower()
 
