@@ -28,8 +28,6 @@ presentation = '''
  | |____   \ V /  | | | |      | |     \ V  V /  | | | | | |
  |______|   \_/   |_| |_|      |_|      \_/\_/   |_| |_| |_|
 
-
-made by: Hosam Hegly, Ayman Younis, Ahmad Abed
 '''
 
 
@@ -52,14 +50,14 @@ def main():
     channel_changer.start()
     progbar = Thread(target=progressbar)
     progbar.start()
-    sniff(prn=handler, iface=interface, timeout=30, monitor=True)
+    sniff(prn=handler, iface=interface, timeout=60, monitor=True)
     time.sleep(1)
     twin = get_network().lower()
     time.sleep(1)
     print('[+]scanning for connected devices')
     progbar = Thread(target=progressbar)
     progbar.start()
-    sniff(prn=devices_handler, iface=interface, timeout=30, monitor=True)
+    sniff(prn=devices_handler, iface=interface, timeout=60, monitor=True)
     time.sleep(1)
     victim = get_device().lower()
     # deauthentication packet to disconnect the victim device from the network
@@ -77,7 +75,7 @@ def progressbar():
     with bar_cls('Scanning', suffix=suffix, max=100) as bar:
         for i in range(100):
             bar.next()
-            time.sleep(0.3)
+            time.sleep(0.6)
 
 
 # get a list of all the interfaces and return the interface chosen by the user
@@ -115,13 +113,9 @@ def handler(pkt):
     if pkt.haslayer(Dot11):
 
         mac_frame = pkt.getlayer(Dot11)
-        ds = pkt.FCfield & 0x3  # frame control
-        to_ds = ds & 0x1 != 0  # to access point
-        from_ds = ds & 0x2 != 0  # from access point
-
         # if pkt.type == 0 and pkt.subtype == 8:  # beacon which means its coming from a network
         if pkt.haslayer(Dot11Beacon):
-            if mac_frame.addr2 not in devices:
+            if mac_frame.addr2 not in network_mac:
                 ssid = pkt[Dot11Beacon].network_stats()['ssid']
                 network_mac[mac_frame.addr2] = ssid
 
@@ -140,13 +134,14 @@ def devices_handler(pkt):
 
         if from_ds == 0 and to_ds == 1:  # source address is client and transmitter is AP
 
-            if str(mac_frame.addr1).lower() == twin and mac_frame.addr2 not in devices:
+            if str(mac_frame.addr1).lower() == twin and mac_frame.addr2 != mac_frame.addr1 \
+                    and mac_frame.addr2 not in devices:
                 devices.add(mac_frame.addr2)
 
         if from_ds == 0 and to_ds == 0:  # control frame or managment from which means src is AP or vice versa
             if str(mac_frame.addr3).lower() == twin and mac_frame.addr2 not in devices:
                 devices.add(mac_frame.addr2)
-                if mac_frame.addr2 in devices and mac_frame.addr3 not in devices:
+                if str(mac_frame.addr2).lower() == twin and mac_frame.addr3 in devices:
                     devices.add(mac_frame.addr3)
 
 
