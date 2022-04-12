@@ -84,8 +84,7 @@ def get_interface():
     interfaces_length = str(len(interface_names) - 1) + ""
     for i in range(0, len(interface_names)):
         print(i, ":", interface_names[i])
-    interface_index = input("\nchoose the WIFI interface you want to sniff packets from"
-                            "(press 0 - " + interfaces_length + "): ")
+    interface_index = input("\nchoose the WIFI interface you want to sniff packets on: ")
     while '0' > str(interface_index) or str(interface_index) > interfaces_length:  # if the user chose wrong number
         interface_index = input("\n\nERROR: please choose between numbers 0 - " + interfaces_length + ": ")
     iface = interface_names[int(interface_index)]
