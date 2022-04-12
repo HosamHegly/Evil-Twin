@@ -5,12 +5,14 @@ import datetime
 import os
 import time
 
+from scapy.layers.dot11 import Dot11Beacon
 from scapy.layers.inet import TCP, UDP, ICMP, IP
 
 
 def network_monitoring_for_visualization_version(pkt):
-    print(str(pkt))
-
+    if pkt.haslayer(Dot11Beacon):
+        ssid = pkt[Dot11Beacon].network_stats()['ssid']
+        print(ssid)
 def get_interface():
     interface_names = netifaces.interfaces()  # get interfaces
     interfaces_length = str(len(interface_names) - 1) + ""
@@ -24,9 +26,9 @@ def get_interface():
     return iface
 
 def monitor(interface):
-    os.system('sudo ifconfig ' +str(interface) + ' down')
-    os.system('sudo iwconfig ' +str(interface) + ' mode monitor')
-    os.system('sudo ifconfig ' +str(interface) + ' up')
+    os.system('sudo ifconfig ' + str(interface) + ' down')
+    os.system('sudo iwconfig ' + str(interface) + ' mode monitor')
+    os.system('sudo ifconfig ' + str(interface) + ' up')
 
 
 interface = get_interface()

