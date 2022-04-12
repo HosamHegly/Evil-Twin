@@ -133,16 +133,15 @@ def devices_handler(pkt):
                 devices.add(mac_frame.addr3)
 
         if from_ds == 0 and to_ds == 1:  # source address is client and transmitter is AP
-
             if str(mac_frame.addr1).lower() == twin and mac_frame.addr2 != mac_frame.addr1 \
                     and mac_frame.addr2 not in devices:
                 devices.add(mac_frame.addr2)
 
-        if from_ds == 0 and to_ds == 0:  # control frame or managment from which means src is AP or vice versa
-            if str(mac_frame.addr3).lower() == twin and mac_frame.addr2 not in devices:
+        if from_ds == 0 and to_ds == 0:  # control frame or managment frame which means src is AP or vice versa
+            if str(mac_frame.addr1).lower() == twin and mac_frame.addr2 not in devices:
                 devices.add(mac_frame.addr2)
-                if str(mac_frame.addr2).lower() == twin and mac_frame.addr3 in devices:
-                    devices.add(mac_frame.addr3)
+                if str(mac_frame.addr2).lower() == twin and mac_frame.addr1 in devices:
+                    devices.add(mac_frame.addr1)
 
 
 # get a list of networks and return the mac of the network chosen by the user
@@ -155,7 +154,7 @@ def get_network():
         print(i, "- " + str(network_mac[network]))
         net_index[str(i)] = network
         i = i + 1
-    k = input("Choose the network you want to impersonate (press 0 - " + str(i) + "): ")
+    k = input("Choose the network you want to impersonate: ")
     return net_index[k]
 
 
