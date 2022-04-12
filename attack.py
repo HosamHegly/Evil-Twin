@@ -50,7 +50,7 @@ def main():
     channel_changer.start()
     progbar = Thread(target=progressbar)
     progbar.start()
-    sniff(prn=callback, iface=interface, timeout=60)
+    sniff(prn=callback, iface=interface, timeout=60, monitor=True)
     time.sleep(1)
     twin = get_network().lower()
     victim = get_device(twin).lower()
@@ -106,7 +106,9 @@ def change_channel():
 
 # captures wireless networks and devices with packets sniffed by scapy
 def callback(pkt):
+
     if pkt.haslayer(Dot11):
+
         mac_frame = pkt.getlayer(Dot11)
         ds = pkt.FCfield & 0x3  # frame control
         to_ds = ds & 0x1 != 0  # to access point
