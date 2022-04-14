@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import os
 import sys
 
@@ -11,6 +12,7 @@ import time
 import netifaces
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp
 
+mac = ''
 client_AP = dict()
 AP = {}
 presentation = '''
@@ -101,6 +103,25 @@ def handler(pkt):
             add_ap(pkt)
 
 
+# mac address of the interface on monitor mode
+def mon_mac(mon_iface):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', mon_iface[:15]))
+    mac = ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
+    return mac
+
+
+# ignore broadcasts from APs
+def noise_filter(addr1, addr2):
+    # Broadcast, broadcast, IPv6mcast, spanning tree, spanning tree, multicast, broadcast
+    ignore = ['ff:ff:ff:ff:ff:ff', '00:00:00:00:00:00', '33:33:00:', '33:33:ff:', '01:80:c2:00:00:00', '01:00:5e:',
+              mac]
+
+    for i in ignore:
+        if i in addr1 or i in addr2:
+            return True
+
+
 def sniffer(iface, ch1='1', ch2='14'):
     i = int(ch1)
     j = int(ch2)
@@ -142,13 +163,16 @@ if __name__ == "__main__":
     os.system('clear')
     time.sleep(1)
     monitor_mode(interface)
-    print("[+]Interface switched to monitor mode")
+    mac = mon_mac(interface)
+    print(mac)
+    '''print("[+]Interface switched to monitor mode")
     time.sleep(1)
     print("[+]Sniffing packets this will take a minute")
     time.sleep(1)
     progbar = Thread(target=progressbar)
     progbar.start()
     sniffer(interface, from_ch, to_ch)
-    time.sleep(2)
+    time.sleep(1)
     os.system('clear')
     output()
+'''
