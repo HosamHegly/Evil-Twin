@@ -58,13 +58,13 @@ def arg_parse():
     if args['interface'] not in netifaces.interfaces():
         print('Interface not found.')
         sys.exit()
-
-    if int(args['channels'][0]) > int(args['channels'][1]):
-        ch1 = args['channels'][1]
-        ch2 = args['channels'][0]
-    else:
-        ch1 = args['channels'][0]
-        ch2 = args['channels'][1]
+    if args['channels'][0] and args['channels'][1]:
+        if int(args['channels'][0]) > int(args['channels'][1]):
+            ch1 = args['channels'][1]
+            ch2 = args['channels'][0]
+        else:
+            ch1 = args['channels'][0]
+            ch2 = args['channels'][1]
 
     return args['interface'], ch1, ch2
 
@@ -125,7 +125,7 @@ def noise_filter(addr1, addr2):
 def sniffer(iface, ch1='1', ch2='14'):
     i = int(ch1)
     j = int(ch2)
-    timeout = time.time() + 60  # a minute and 20 seconds from now
+    timeout = time.time() + 60  # a minute  from now
     while True:
         os.system("iwconfig " + iface + " channel " + str(i))  # switch channel
         i = i % j + 1
