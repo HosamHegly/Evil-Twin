@@ -165,7 +165,7 @@ if __name__ == "__main__":
     monitor_mode(interface)
     mac = mon_mac(interface)
     print(mac)
-    '''print("[+]Interface switched to monitor mode")
+    print("[+]Interface switched to monitor mode")
     time.sleep(1)
     print("[+]Sniffing packets this will take a minute")
     time.sleep(1)
@@ -175,4 +175,3 @@ if __name__ == "__main__":
     time.sleep(1)
     os.system('clear')
     output()
-'''
