@@ -80,20 +80,45 @@ def add_ap(pkt):
     else:
         AP[bssid] = {}
         AP[bssid]['channel'] = ap_channel
-        AP[bssid]['ssid'] = ssid
+        AP[bssid]['ESSID'] = ssid
 
 
-def handler(pkt):
+def add_client(pkt):
+    global AP
     global client_AP
-    if pkt.haslayer(Dot11):
-        if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):  # AP
-            add_ap(pkt)
+    ds = pkt.FCfield & 0x3  # frame control
+    to_ds = ds & 0x01 != 0
+    from_ds = ds & 0x2 != 0
+    addr2 = pkt[Dot11].addr2.lower()
+    addr1 = pkt[Dot11].addr1.lower()
 
+    # reciever is bssid and transmitter is client
+    if to_ds and not from_ds:
+        if addr1 in AP:
+            if addr2 not in client_AP:
+                client_AP[addr2] = {}
+                client_AP[addr2]['ESSID'] = AP[addr1]['ESSID']
+                client_AP[addr2]['channel'] = AP[addr1]['channel']
+                client_AP[addr2]['BSSID'] = addr1.lower()
 
-# mac address of the interface on monitor mode
-def mon_mac(mon_iface):
-    mon = get_mac_address(interface=mon_iface)
-    return mon
+            elif addr1 not in client_AP[addr2]['BSSID']:
+                client_AP[addr2]['ESSID'] = AP[addr1]['ESSID']
+                client_AP[addr2]['channel'] = AP[addr1]['channel']
+                client_AP[addr2]['BSSID'] = addr1.lower()
+
+            # transmitter is bssid and receiver is client
+        if from_ds and not to_ds:
+            if addr2 in AP:
+                if addr1 not in client_AP:
+                    client_AP[addr1] = {}
+                    client_AP[addr1]['ESSID'] = AP[addr2]['ESSID']
+                    client_AP[addr1]['channel'] = AP[addr2]['channel']
+                    client_AP[addr1]['BSSID'] = addr2.lower()
+
+                elif addr2 not in client_AP[addr1]['BSSID']:
+                    client_AP[addr1]['ESSID'] = AP[addr2]['ESSID']
+                    client_AP[addr1]['channel'] = AP[addr2]['channel']
+                    client_AP[addr1]['BSSID'] = addr2.lower()
 
 
 # ignore broadcasts from APs
@@ -105,6 +130,29 @@ def noise_filter(addr1, addr2):
     for i in ignore:
         if i in addr1 or i in addr2:
             return True
+
+
+def handler(pkt):
+    if pkt.haslayer(Dot11):
+
+        if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):  # AP
+            add_ap(pkt)
+
+        elif pkt.addr1 and pkt.addr2:
+            pkt.addr1 = pkt.addr1.lower()
+            pkt.addr2 = pkt.addr2.lower()
+
+            if noise_filter(pkt.addr1, pkt.addr2):
+                return
+
+    if pkt.type == 2:  # Data frames
+        add_client(pkt)
+
+
+# mac address of the interface on monitor mode
+def mon_mac(mon_iface):
+    mon = get_mac_address(interface=mon_iface)
+    return mon
 
 
 def sniffer(iface, ch):
@@ -133,12 +181,21 @@ def sniffer(iface, ch):
 def output():
     dash = '-' * 60
     global AP
+    global client_AP
     print(dash)
     print('{:<20s}{:>10s}{:>25s}'.format('ESSID', 'CH', 'Access Points'))
     print(dash)
     for i in AP:
-        ssid = AP[i]['ssid']
+        ssid = AP[i]['ESSID']
         print('{:<20s}{:>10s}{:^40s}'.format(ssid, AP[i]['channel'], i))
+    print('\n\n')
+    dash = '-' * 80
+    print(dash)
+    print('{:<20s}{:>10s}{:>25s}{:>25s}'.format('Stations', 'CH', 'ESSID', 'BSSID'))
+    print(dash)
+    for i in client_AP:
+        print('{:<20s}{:>10s}{:^40s}{:>25}'.format(i, client_AP[i]['channel'], client_AP[i]['ESSID'],
+                                                   client_AP[i]['BSSID']))
 
 
 # display a progress bar for aesthetics
