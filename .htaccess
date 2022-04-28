@@ -1,3 +1,0 @@
-RewriteEngine on
-RewriteCond %{REQUEST_URI} !^/captiveportal/
-RewriteRule ^(.*)$ http://wifiportal2.aire.en/captiveportal/index.html [L,R=302]

