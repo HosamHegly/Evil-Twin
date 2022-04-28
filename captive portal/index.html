@@ -39,16 +39,19 @@
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-        }).then((result) => {
-          return result.json();
-        }).then((data) => {
-          console.log(data);
-        });
+        })
+          .then((result) => {
+            console.log(result.json());
+          })
+          .then((data) => {
+            console.log(data);
+          });
       }
     </script>
 
     <title>Login Form</title>
-    <link rel="stylesheet" type="text/css" href="css/style.css" />
+    <link rel="stylesheet" type
+    ="text/css" href="css/style.css" />
   </head>
   <body>
     <h2>Login Page</h2>
