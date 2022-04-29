@@ -346,6 +346,8 @@ def sig_handler(signum, frame):
         os.system('iptables -F')
         os.system('iptables -t nat -F')
         os.system("ifconfig " + str(interface) + " down")
+        os.system("iwconfig " + str(interface) + " 10.0.0.249 netmask 255.255.255.0")
+
         os.system("ifconfig " + str(interface) + " up")
         os.system("rm dnsmasq.conf")
         os.system("rm hostapd.conf")
