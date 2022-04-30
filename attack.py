@@ -335,20 +335,15 @@ def sniff_dhcp(iface):
 
 def sig_handler(signum, frame):
     global interface
-    msg = input("Ctrl-c was pressed. Do you really want to exit? y/n ")
-    if msg == 'y':
-        os.system("killall dnsmasq")
-        os.system("killall hostapd")
-        os.system('iptables -F')
-        os.system('iptables -t nat -F')
-        # os.system("ifconfig " + str(interface) + " 10.0.0.12")
-        os.system("rm dnsmasq.conf")
-        os.system("rm hostapd.conf")
-        sys.exit()
-    else:
-        print("", end="\r", flush=True)
-        print(" " * len(msg), end="", flush=True)  # clear the printed line
-        print("    ", end="\r", flush=True)
+    os.system("killall dnsmasq")
+    os.system("killall hostapd")
+    os.system('iptables -F')
+    os.system('iptables -t nat -F')
+    # os.system("ifconfig " + str(interface) + " 10.0.0.12")
+    os.system("rm dnsmasq.conf")
+    os.system("rm hostapd.conf")
+    print("Bye")
+    sys.exit()
 
 
 if __name__ == "__main__":
@@ -387,5 +382,5 @@ if __name__ == "__main__":
     configDnsmasq(interface)
     time.sleep(1)
     signal.signal(signal.SIGINT, sig_handler)
-    print("[+]scanning our access point's stations activity if you want to stop press ctrl-c...")
+    print("[+]scanning activities in our access point if you want to stop press ctrl-c...")
     sniff_dhcp(interface)
