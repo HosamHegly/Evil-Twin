@@ -82,8 +82,7 @@ def monitor_mode(iface):
 def add_ap(pkt):
     global from_ch
     global AP
-    if pkt.haslayer(Dot11Beacon):
-        ssid = pkt[Dot11Beacon].network_stats()['ssid']
+    ssid = pkt[Dot11Beacon].network_stats()['ssid']
 
     bssid = pkt[Dot11].addr3.lower()  # ap mac address
     ap_channel = str(from_ch)
