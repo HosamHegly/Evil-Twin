@@ -114,7 +114,8 @@ if __name__ == "__main__":
     interface = input("please enter the name of the interface you want to work with: ")
     monitor_mode(interface)
     time.sleep(1)
-    Th = Thread(target=change_channel, args=(interface,)).start()
+    Th = Thread(target=change_channel, args=(interface,))
+    Th.start()
     time.sleep(2)
     while True:
         print("[+]starting scan if you want to stop press ctrl-c")
