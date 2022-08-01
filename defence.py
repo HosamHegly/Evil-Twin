@@ -9,7 +9,7 @@ essid = ''
 ch = 1
 stop_thread = False
 evil = ''
-
+flag = False
 
 def handler(pkt):
     global AP
@@ -39,17 +39,18 @@ def monitor_mode(iface):
 
 def ap_handler(pkt):
     global ssid
+    global evil
+    global flag
     if pkt.haslayer(Dot11):
 
         if pkt.haslayer(Dot11Beacon):  # AP
-            if pkt.addr2 is not None:
-                if pkt.addr2 == mac and ssid == '':
-                    ssid = pkt[Dot11Beacon].network_stats()['ssid']
-                elif ssid != '' and pkt.addr2 != mac:
-                    if pkt[Dot11Beacon].network_stats()['ssid'] == ssid:
-                        print("[+] Possible Evil twin detected")
-                        sys.exit()
-
+            if pkt.addr2 == mac and ssid == '':
+                ssid = pkt[Dot11Beacon].network_stats()['ssid']
+            elif ssid != '' and pkt.addr2 != mac:
+                if pkt[Dot11Beacon].network_stats()['ssid'] == ssid:
+                    add_ap(pkt)
+                    print("[+] Possible Evil twin detected")
+                    flag = True
 
 def change_channel(iface):
     global stop_thread
@@ -72,32 +73,31 @@ def add_ap(pkt):
     global from_ch
     global AP
     global essid
+    global mac
     global evil
     ssid = pkt[Dot11Beacon].network_stats()['ssid']
 
     bssid = pkt[Dot11].addr3.lower()  # ap mac address
-    if str(bssid).lower() == mac.lower():
-        essid = ssid
-    if essid != '' and ssid == essid and bssid != mac.lower():
-        evil = bssid
+    essid = ssid
+    evil = bssid
 
     ap_channel = str(from_ch)
-    if bssid in AP:
-        return
-    else:
-        AP[bssid] = {}
-        AP[bssid]['channel'] = ap_channel
-        AP[bssid]['ESSID'] = ssid
+
+
+    AP[bssid] = {}
+    AP[bssid]['channel'] = ap_channel
+    AP[bssid]['ESSID'] = ssid
 
 
 def sniffer(iface):
     global ch
+    global flag
     timeout = time.time() + 60  # a minute  from now
     while True:
         os.system("iwconfig " + iface + " channel " + str(ch))  # switch channel
         ch = ch % 14 + 1
-        sniff(prn=handler, iface=iface, timeout=1)
-        if time.time() > timeout:
+        sniff(prn=ap_handler, iface=iface, timeout=1)
+        if time.time() > timeout or flag == True:
             break
 
 
